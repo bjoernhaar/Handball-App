@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Handball Favoriten</title>
+  <meta name="description" content="Favoriten-Mannschaften aus dem HVNB-nuLiga mit Spielplan, Tabelle, Statistiken, Spielorten und Kalender-Export." />
+  <meta name="theme-color" content="#1b5e20" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon192.png" />
+  <link rel="apple-touch-icon" href="icons/icon192.png" />
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <button id="backBtn" class="icon-btn" title="Zurück" aria-label="Zurück" hidden>←</button>
+      <h1 id="pageTitle">Handball Favoriten</h1>
+      <div class="topbar-actions" id="topbarActions"></div>
+    </div>
+  </header>
+
+  <div id="notifyBanner" class="notify-banner" hidden>
+    <span>🔔 Benachrichtigungen bei neuen Ergebnissen und vor Spielbeginn aktivieren?</span>
+    <div class="notify-banner-actions">
+      <button class="btn small enable">Aktivieren</button>
+      <button class="btn small secondary dismiss">Nicht jetzt</button>
+    </div>
+  </div>
+
+  <main id="app-root" class="app-root" aria-live="polite"></main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
