@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { createECDH, randomBytes } from "node:crypto";
 import ece from "http_ece";
 import { fixture } from "./helpers.mjs";
-import worker, { runScheduled } from "../src/index.js";
+import worker, { runScheduled, vapidFromEnv } from "../src/index.js";
 import { parseTeamPortraitHtml } from "../src/schedule.js";
 
 const html = fixture("teamPortrait.html");
@@ -196,7 +196,14 @@ test("jedes Gerät arbeitet autark: eigene Favoriten, eigene Mitteilungen, Ausfa
   assert.deepEqual(left, [0, 2], "B (2 Teams) und D (0 Teams) sind noch da");
 });
 
-test("abgelaufenes Push-Abo wird gelöscht",{ skip: !html && "Fixtures fehlen" }, async (t) => {
+test("VAPID-Secret mit BOM/Zeilenumbruch wird trotzdem gelesen", async () => {
+  const env = await makeEnv();
+  const withBom = { ...env, VAPID_PRIVATE_JWK: "﻿" + env.VAPID_PRIVATE_JWK + "\r\n" };
+  assert.equal(vapidFromEnv(withBom).privateJwk.kty, "EC");
+  assert.throws(() => vapidFromEnv({ ...env, VAPID_PRIVATE_JWK: "kaputt" }), /kein gültiges JSON/);
+});
+
+test("abgelaufenes Push-Abo wird gelöscht", { skip: !html && "Fixtures fehlen" }, async (t) => {
   const env = await makeEnv();
   const start = Date.UTC(2026, 9, 1, 3, 0);
   // Snapshot so anlegen, dass ein Spiel in 110 Minuten beginnt -> Erinnerung fällig.

@@ -192,12 +192,15 @@ function pickBatch(teamKeys, snapshots, runIndex) {
   return batch;
 }
 
-function vapidFromEnv(env) {
-  return {
-    publicKey: env.VAPID_PUBLIC_KEY,
-    privateJwk: JSON.parse(env.VAPID_PRIVATE_JWK),
-    subject: env.VAPID_SUBJECT,
-  };
+export function vapidFromEnv(env) {
+  let privateJwk;
+  try {
+    // Unsichtbares BOM/Leerraum tolerieren (entsteht z.B. beim Einfügen per PowerShell-Pipe).
+    privateJwk = JSON.parse(String(env.VAPID_PRIVATE_JWK || "").replace(/^﻿/, "").trim());
+  } catch (err) {
+    throw new Error(`Secret VAPID_PRIVATE_JWK ist kein gültiges JSON (${err.message}) - neu setzen, siehe README.`);
+  }
+  return { publicKey: env.VAPID_PUBLIC_KEY, privateJwk, subject: env.VAPID_SUBJECT };
 }
 
 export async function runScheduled(env, scheduledTime) {

@@ -67,8 +67,12 @@ npm install
 npx wrangler login                       # öffnet den Browser, Zugriff erlauben
 npx wrangler kv namespace create KV      # ausgegebene id in wrangler.toml bei [[kv_namespaces]] eintragen
 npm run vapid                            # erzeugt Schlüssel: VAPID_PUBLIC_KEY in wrangler.toml eintragen
-npx wrangler secret put VAPID_PRIVATE_JWK   # Inhalt von vapid-private.json einfügen
+cmd /c "type vapid-private.json | npx wrangler secret put VAPID_PRIVATE_JWK"
 ```
+
+Wichtig unter Windows: den Schlüssel **nicht** per PowerShell-Pipe (`Get-Content … | …`) übergeben.
+PowerShell 5.1 setzt dabei unsichtbar ein BOM davor. Der Worker toleriert das inzwischen zwar, der
+`cmd /c "type …"`-Weg überträgt die Datei aber byte-genau.
 
 In `worker/wrangler.toml` die Adresse der GitHub-Pages-Seite eintragen:
 
