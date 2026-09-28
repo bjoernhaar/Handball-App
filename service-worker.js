@@ -7,7 +7,7 @@
 // Das ist zuverlässiger als "Periodic Background Sync" im Browser, das
 // Chrome nur nach eigenem Ermessen und selten auslöst.
 
-const CACHE_VERSION = "v3";
+const CACHE_VERSION = "v4";
 const CACHE_NAME = `handball-favoriten-${CACHE_VERSION}`;
 
 const APP_SHELL = [

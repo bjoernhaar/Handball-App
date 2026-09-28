@@ -9,6 +9,7 @@ import { createECDH, randomBytes } from "node:crypto";
 import ece from "http_ece";
 import { fixture } from "./helpers.mjs";
 import worker, { runScheduled } from "../src/index.js";
+import { parseTeamPortraitHtml } from "../src/schedule.js";
 
 const html = fixture("teamPortrait.html");
 const ORIGIN = "https://example.github.io";
@@ -123,7 +124,79 @@ test("Cron erkennt eine Spielverlegung und schickt eine Push-Mitteilung", { skip
   assert.equal(pushes.length, 1);
 });
 
-test("abgelaufenes Push-Abo wird gelöscht", { skip: !html && "Fixtures fehlen" }, async (t) => {
+test("jedes Gerät arbeitet autark: eigene Favoriten, eigene Mitteilungen, Ausfall betrifft nur sich selbst", { skip: !html && "Fixtures fehlen" }, async (t) => {
+  const env = await makeEnv();
+  const TEAM_1 = { teamtable: "2227521", championship: "HRBN 26/27", group: "489041" };
+  const TEAM_2 = { teamtable: "9999999", championship: "HRBN 26/27", group: "489041" };
+  const key = (x) => `team:${x.teamtable}|${x.championship}|${x.group}`;
+
+  // Gespeicherter Stand: bei beiden Teams war ein offenes Spiel früher um 09:00.
+  const current = parseTeamPortraitHtml(html);
+  const open = current.matches.find((m) => m.homeScore == null && m.time);
+  const old = { ...current, matches: current.matches.map((m) => (m.matchNumber === open.matchNumber ? { ...m, time: "09:00" } : m)) };
+  await env.KV.put(key(TEAM_1), JSON.stringify(old));
+  await env.KV.put(key(TEAM_2), JSON.stringify(old));
+
+  const devices = {};
+  for (const [name, teams] of [["A", [TEAM_1]], ["B", [TEAM_1, TEAM_2]], ["C", [TEAM_2]], ["D", []]]) {
+    const ua = createECDH("prime256v1");
+    ua.generateKeys();
+    const auth = randomBytes(16);
+    const subscription = {
+      endpoint: `https://fcm.googleapis.com/fcm/send/device-${name}`,
+      keys: { p256dh: ua.getPublicKey().toString("base64url"), auth: auth.toString("base64url") },
+    };
+    devices[name] = { ua, auth, subscription, received: [] };
+    const res = await worker.fetch(
+      new Request("https://w.example/subscription", {
+        method: "PUT",
+        headers: { Origin: ORIGIN, "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription, teams }),
+      }),
+      env
+    );
+    assert.equal(res.status, 200);
+  }
+
+  // Gerät A wurde deinstalliert -> sein Push-Dienst antwortet 410.
+  t.mock.method(globalThis, "fetch", async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://hvnb-handball.liga.nu/")) return new Response(html, { status: 200 });
+    const name = url.split("device-")[1];
+    const dev = devices[name];
+    if (name === "A") return new Response(null, { status: 410 });
+    const payload = JSON.parse(
+      ece.decrypt(Buffer.from(init.body), { version: "aes128gcm", privateKey: dev.ua, authSecret: dev.subscription.keys.auth }).toString()
+    );
+    dev.received.push(payload.teamId);
+    return new Response(null, { status: 201 });
+  });
+
+  await runScheduled(env, Date.UTC(2026, 9, 1, 3, 0));
+
+  const id1 = "hvnb-handball.liga.nu:2227521:HRBN 26/27:489041";
+  const id2 = "hvnb-handball.liga.nu:9999999:HRBN 26/27:489041";
+  assert.deepEqual(devices.B.received.sort(), [id1, id2].sort(), "B folgt beiden Teams");
+  assert.deepEqual(devices.C.received, [id2], "C bekommt nur sein Team");
+  assert.deepEqual(devices.D.received, [], "D ohne Favoriten bekommt nichts");
+
+  const subs = (await env.KV.list({ prefix: "sub:" })).keys;
+  assert.equal(subs.length, 3, "nur das ausgefallene Gerät A wurde entfernt");
+
+  // C schaltet Mitteilungen aus -> B bleibt unberührt.
+  await worker.fetch(
+    new Request("https://w.example/subscription", {
+      method: "DELETE",
+      headers: { Origin: ORIGIN, "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint: devices.C.subscription.endpoint }),
+    }),
+    env
+  );
+  const left = (await env.KV.list({ prefix: "sub:" })).keys.map((k) => k.metadata.t.length).sort();
+  assert.deepEqual(left, [0, 2], "B (2 Teams) und D (0 Teams) sind noch da");
+});
+
+test("abgelaufenes Push-Abo wird gelöscht",{ skip: !html && "Fixtures fehlen" }, async (t) => {
   const env = await makeEnv();
   const start = Date.UTC(2026, 9, 1, 3, 0);
   // Snapshot so anlegen, dass ein Spiel in 110 Minuten beginnt -> Erinnerung fällig.

@@ -27,7 +27,9 @@ const LAST_SYNC_KEY = "lastGlobalSyncAt";
 const SYNC_INTERVAL_MS = 30 * 60 * 1000; // beim Öffnen höchstens alle 30 Min. alles neu laden
 const TEAM_STALE_MS = 15 * 60 * 1000; // Team-Detail lädt im Hintergrund nach, wenn älter
 const CHANGE_HINT_MS = 14 * 24 * 60 * 60 * 1000; // "geändert"-Hinweis 14 Tage lang zeigen
-const BANNER_DISMISSED_KEY = "notifyBannerDismissedAt";
+// Einmal entschieden (aktiviert, "Nicht jetzt", ausgeschaltet oder blockiert)
+// -> kein Banner mehr, nur noch die Glocke oben in der Übersicht.
+const PUSH_DECIDED_KEY = "pushBannerDecided";
 
 const root = document.getElementById("app-root");
 const pageTitle = document.getElementById("pageTitle");
@@ -213,9 +215,9 @@ async function syncPushQuietly(force = false) {
   }
 }
 
-initServiceWorker()
-  .then(() => Promise.all([syncIfStale(), syncPushQuietly()]))
-  .then(updateNotifyBanner);
+const swReady = initServiceWorker();
+swReady.then(() => Promise.all([syncIfStale(), syncPushQuietly()])).then(updateNotifyBanner);
+swReady.then(updateNotifyBanner);
 
 // ---------------------------------------------------------------------------
 // Mitteilungen aktivieren (Banner + Glocke in der Übersicht)
@@ -223,13 +225,15 @@ initServiceWorker()
 
 async function updateNotifyBanner() {
   const state = await getPushState(swRegistration);
-  const dismissedAt = Number(storageGet(BANNER_DISMISSED_KEY)) || 0;
-  const dismissedRecently = Date.now() - dismissedAt < 30 * 24 * 60 * 60 * 1000;
+  if (state === "on" || state === "denied") storageSet(PUSH_DECIDED_KEY, "1");
+  const decided = storageGet(PUSH_DECIDED_KEY) === "1";
   const hasFavorites = (await getFavorites()).length > 0;
-  notifyBanner.hidden = state !== "off" || dismissedRecently || !hasFavorites;
+  notifyBanner.hidden = state !== "off" || decided || !hasFavorites;
 }
 
 async function turnOnPush() {
+  storageSet(PUSH_DECIDED_KEY, "1");
+  notifyBanner.hidden = true;
   try {
     await enablePush(swRegistration, await getFavorites());
     showToast("Mitteilungen aktiviert");
@@ -244,6 +248,7 @@ async function togglePush() {
   const state = await getPushState(swRegistration);
   if (state === "on") {
     if (!confirm("Mitteilungen für dieses Gerät ausschalten?")) return;
+    storageSet(PUSH_DECIDED_KEY, "1");
     await disablePush(swRegistration);
     showToast("Mitteilungen ausgeschaltet");
     renderFavorites();
@@ -260,8 +265,9 @@ async function togglePush() {
 
 notifyBanner.querySelector("button.enable").addEventListener("click", turnOnPush);
 notifyBanner.querySelector("button.dismiss").addEventListener("click", () => {
-  storageSet(BANNER_DISMISSED_KEY, String(Date.now()));
+  storageSet(PUSH_DECIDED_KEY, "1");
   notifyBanner.hidden = true;
+  showToast("Mitteilungen kannst du jederzeit über die Glocke 🔕 oben einschalten.");
 });
 
 // ---------------------------------------------------------------------------
@@ -269,6 +275,7 @@ notifyBanner.querySelector("button.dismiss").addEventListener("click", () => {
 // ---------------------------------------------------------------------------
 
 async function renderFavorites() {
+  await swReady; // sonst fehlt die Glocke direkt nach dem Start
   const pushState = await getPushState(swRegistration);
   const bell = {
     on: { icon: "🔔", title: "Mitteilungen sind an – tippen zum Ausschalten" },
