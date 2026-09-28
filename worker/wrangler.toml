@@ -11,7 +11,7 @@ crons = ["*/15 * * * *"]
 # (id wird nach "npx wrangler kv namespace create KV" eingetragen)
 [[kv_namespaces]]
 binding = "KV"
-id = "KV_NAMESPACE_ID"
+id = "b74d361f999e4918a9a9636e23766c3e"
 
 [vars]
 # Nur diese Seiten dürfen den Worker nutzen (kein offener Proxy)
