@@ -22,6 +22,7 @@ import { looselyEquals } from "./src/teamNameUtils.js";
 import { parseTeamPortraitLink } from "./src/parsers/nuligaUrlParser.js";
 import { runSync } from "./src/sync.js";
 import { pushSupported, getPushState, enablePush, disablePush, syncPushFavorites } from "./src/push.js";
+import { APP_VERSION } from "./src/version.js";
 
 const LAST_SYNC_KEY = "lastGlobalSyncAt";
 const SYNC_INTERVAL_MS = 30 * 60 * 1000; // beim Öffnen höchstens alle 30 Min. alles neu laden
@@ -218,6 +219,7 @@ async function syncPushQuietly(force = false) {
 const swReady = initServiceWorker();
 swReady.then(() => Promise.all([syncIfStale(), syncPushQuietly()])).then(updateNotifyBanner);
 swReady.then(updateNotifyBanner);
+announceUpdate();
 
 // ---------------------------------------------------------------------------
 // Mitteilungen aktivieren (Banner + Glocke in der Übersicht)
@@ -311,7 +313,15 @@ async function renderFavorites() {
     root.appendChild(list);
   }
 
+  root.appendChild(el("div", { class: "app-version", text: `Handball Favoriten · Version ${APP_VERSION}` }));
   root.appendChild(el("button", { class: "fab", title: "Mannschaft suchen", onclick: () => navigate("#add") }, "+"));
+}
+
+/** Nach einem Update einmal kurz anzeigen, dass eine neue Version läuft. */
+function announceUpdate() {
+  const seen = storageGet("lastSeenVersion");
+  if (seen && seen !== APP_VERSION) showToast(`App aktualisiert auf Version ${APP_VERSION}`);
+  storageSet("lastSeenVersion", APP_VERSION);
 }
 
 function renderFavoriteCard(team, matches = []) {

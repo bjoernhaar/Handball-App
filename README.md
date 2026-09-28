@@ -90,7 +90,16 @@ mit Branch `main` und Ordner `/ (root)` wählen. Nach 1–2 Minuten ist die App 
 `https://<github-name>.github.io/<repo-name>/` erreichbar. GitHub Pages liefert automatisch HTTPS,
 das für Service Worker, Push und Installation Pflicht ist.
 
-Nach Änderungen an App-Dateien in `service-worker.js` die `CACHE_VERSION` erhöhen.
+## Neue Version veröffentlichen
+
+1. `APP_VERSION` in `src/version.js` erhöhen (z.B. `"1.1"`). Die Version erscheint unten in der
+   Übersicht, und der Worker meldet sie unter `/` und `/config`.
+2. `CACHE_VERSION` in `service-worker.js` und `version` in `worker/package.json` auf denselben Wert
+   setzen und einen Eintrag in `CHANGELOG.md` ergänzen. `npm test` prüft, dass alles zusammenpasst.
+3. Committen, pushen und taggen (`git tag -a v1.1 -m "Version 1.1"`, `git push --tags`). Wurde am
+   Worker etwas geändert: `cd worker; npx wrangler deploy`.
+
+Nutzer bekommen die neue Version automatisch beim nächsten Öffnen der App.
 
 ### Auf dem Android-Handy installieren
 

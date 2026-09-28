@@ -7,7 +7,9 @@
 // Das ist zuverlässiger als "Periodic Background Sync" im Browser, das
 // Chrome nur nach eigenem Ermessen und selten auslöst.
 
-const CACHE_VERSION = "v4";
+// Muss APP_VERSION aus src/version.js entsprechen (Test: worker/test/version.test.mjs).
+// Neue Version = neuer Cache-Name = alte App-Dateien werden verworfen.
+const CACHE_VERSION = "1.0";
 const CACHE_NAME = `handball-favoriten-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -17,6 +19,7 @@ const APP_SHELL = [
   "./app.js",
   "./manifest.webmanifest",
   "./src/config.js",
+  "./src/version.js",
   "./src/push.js",
   "./src/sync.js",
   "./src/notifications.js",

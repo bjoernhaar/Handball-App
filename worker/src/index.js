@@ -22,6 +22,7 @@ import {
   EVENT_TYPES,
   REMINDER_LEAD_MINUTES,
 } from "../../src/shared/matchEvents.js";
+import { APP_VERSION } from "../../src/version.js";
 
 const CRON_MINUTES = 15; // muss zu [triggers] crons in wrangler.toml passen
 const BATCH_SIZE = 12;
@@ -143,14 +144,20 @@ async function handleFetch(request, env) {
     return new Response(null, { status: origin ? 204 : 403, headers: corsHeaders(origin) });
   }
   if (url.pathname === "/") {
-    return new Response("Handball Favoriten - Worker läuft.", { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    return new Response(`Handball Favoriten - Worker läuft (Version ${APP_VERSION}).`, {
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
   }
   // Alles Weitere nur für die eigene App - kein offener Proxy für Dritte.
   if (!origin) return json({ error: "Origin nicht erlaubt." }, 403, null);
 
   if (url.pathname === "/proxy" && request.method === "GET") return handleProxy(request, origin);
   if (url.pathname === "/config" && request.method === "GET") {
-    return json({ vapidPublicKey: env.VAPID_PUBLIC_KEY, reminderLeadMinutes: REMINDER_LEAD_MINUTES }, 200, origin);
+    return json(
+      { version: APP_VERSION, vapidPublicKey: env.VAPID_PUBLIC_KEY, reminderLeadMinutes: REMINDER_LEAD_MINUTES },
+      200,
+      origin
+    );
   }
   if (url.pathname === "/subscription" && request.method === "PUT") return handlePutSubscription(request, env, origin);
   if (url.pathname === "/subscription" && request.method === "DELETE") return handleDeleteSubscription(request, env, origin);
