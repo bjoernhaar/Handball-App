@@ -1,134 +1,132 @@
 # Handball Favoriten (PWA)
 
-Die Web-App-Version von [Handball Favoriten](../HandballFavoriten) als **installierbare Progressive
-Web App (PWA)** – kein Chrome-Extension-Rahmen, keine Android-Studio-Installation nötig. Einfach als
-Webseite hosten (z.B. GitHub Pages) und auf dem Handy in Chrome öffnen und "installieren".
+Installierbare Web-App für Lieblingsmannschaften aus dem **Handballverband Niedersachsen-Bremen**
+(Datenbasis: [hvnb-handball.liga.nu](https://hvnb-handball.liga.nu/)). Läuft über GitHub Pages in
+Chrome auf Android und lässt sich dort als App installieren. Frei nutzbar für beliebig viele Nutzer,
+**ohne Werbung, ohne Tracker, ohne Konto**.
 
-Funktionsumfang identisch zu den anderen beiden Varianten: Favoriten-Mannschaften des HVNB per
-nuLiga-Link hinzufügen, Spielplan/Ergebnisse, Tabelle, Spielerstatistiken, Spielorte mit
-Routenplaner, Ein-Klick-Kalender-Export, Hintergrund-Sync + Benachrichtigungen.
+- **Mannschaftssuche**: Verein suchen → Mannschaft antippen → Favorit. Alternativ einen
+  nuLiga-Link einfügen oder aus Chrome über „Teilen“ an die App schicken.
+- **Spielplan** mit Ergebnissen, Hallenadresse und Routenplaner, Google-Kalender-Export,
+  Hinweis „geändert“ bei verlegten Spielen.
+- **Tabelle** der Staffel.
+- **Statistiken der Spielklasse**: Mannschaftsvergleich (Tore, 7m-Quote, Zeitstrafen, Karten)
+  sowie Spieler-Ranglisten (Tore, 7m-Tore, Zeitstrafen, Gelbe und Rote Karten).
+- **Push-Mitteilungen**, auch wenn die App geschlossen ist: Spielplanänderung (Datum, Uhrzeit,
+  Halle), neues oder entfallenes Spiel, neues Ergebnis, Erinnerung 2 Stunden vor Anpfiff.
 
-## Warum eine dritte Variante?
-
-- **Native Android-App**: volle Kontrolle, aber du musst Android Studio installieren und die App
-  selbst bauen/übertragen.
-- **Chrome-Erweiterung**: funktioniert super auf dem **Desktop**, aber **Chrome auf Android
-  unterstützt gar keine Erweiterungen** – sie lässt sich auf dem Handy also nicht nutzen.
-- **Diese PWA**: läuft überall, wo es einen Browser gibt, inkl. Chrome auf Android. Über die
-  "App installieren"-Funktion von Chrome landet sie wie eine normale App auf dem Startbildschirm
-  deines Pixel 10 Pro – kein Play Store nötig.
-
-## Wichtig: CORS-Proxy
-
-nuLiga sendet keine `Access-Control-Allow-Origin`-Header. Ein Browser lässt JavaScript auf einer
-normalen Webseite (anders als bei einer Chrome-Erweiterung mit `host_permissions`) deshalb nicht
-direkt auf `hvnb-handball.liga.nu` zugreifen ("CORS-Fehler"). Diese App leitet Anfragen deshalb
-über den kostenlosen, öffentlichen Proxy **[allorigins.win](https://allorigins.win)** um (einzige
-Stelle: `src/nuligaClient.js`).
-
-Das ist ein Fremd-Dienst, den ich nicht kontrolliere – für ein privates Hobbyprojekt ist das ein
-üblicher, praktikabler Kompromiss, aber falls er mal down oder zu langsam ist, öffnet die App
-Fehlermeldungen statt Daten. Beheben:
-
-1. Anderen öffentlichen Proxy eintragen, z.B. `https://corsproxy.io/?url=` (Antwortformat prüfen,
-   ggf. `fetchDocument` in `src/nuligaClient.js` leicht anpassen).
-2. Robuster (empfohlen bei ernsthafter Nutzung): einen eigenen, kostenlosen
-   [Cloudflare Worker](https://developers.cloudflare.com/workers/) als Proxy deployen (wenige
-   Zeilen Code) und dessen URL eintragen – dann hängt nichts mehr an einem fremden Dienst.
-
-## Lokal testen
-
-Kein Build-Schritt nötig, aber ein lokaler HTTP-Server ist Pflicht (Service Worker und
-`fetch()` funktionieren nicht über `file://`):
-
-```bash
-npx serve .
-# oder: python3 -m http.server 8080
-```
-
-Dann `http://localhost:PORT` im Browser öffnen.
-
-## Auf GitHub veröffentlichen (GitHub Pages)
-
-1. Neues Repository auf GitHub anlegen (oder VS Code/Android Studios "Auf GitHub freigeben"
-   nutzen) und den Inhalt dieses Ordners hochladen (`git init`, `git add .`, `git commit`,
-   `git push`, oder per VS-Code-Quellcode-Verwaltung → "Publish to GitHub").
-2. Im Repository: **Settings → Pages → Source** auf "Deploy from a branch" stellen, Branch `main`
-   und Ordner `/ (root)` wählen, speichern.
-3. Nach ein bis zwei Minuten ist die App unter `https://<dein-github-name>.github.io/<repo-name>/`
-   erreichbar (GitHub zeigt den Link direkt auf der Pages-Einstellungsseite an).
-
-**Wichtig:** GitHub Pages liefert automatisch HTTPS aus – das ist zwingend nötig, Service Worker
-und "App installieren" funktionieren nur über HTTPS (oder `localhost`).
-
-## Als App auf dem Pixel 10 Pro installieren
-
-1. Die GitHub-Pages-Adresse (siehe oben) in **Chrome** auf dem Pixel 10 Pro öffnen.
-2. Rechts oben aufs Drei-Punkte-Menü tippen → **"App installieren"** (bzw. "Zum Startbildschirm
-   hinzufügen", je nach Chrome-Version). Falls die App die Installierbarkeits-Kriterien erfüllt
-   (Manifest + Service Worker + HTTPS, hier alles vorhanden), erscheint der Punkt meist auch
-   automatisch als Vorschlag/Banner.
-3. Bestätigen – die App landet mit eigenem Icon auf dem Startbildschirm und startet ohne
-   Adressleiste, wie eine "echte" App.
-4. Optional: Beim ersten Start das Banner "Benachrichtigungen aktivieren" bestätigen, um
-   Push-artige lokale Benachrichtigungen bei neuen Ergebnissen zu erhalten.
-
-### Spiel-Link direkt aus Chrome teilen
-
-Ist die App installiert, taucht sie in Androids "Teilen"-Menü auf: auf einer
-nuLiga-Mannschaftsseite in Chrome auf Teilen tippen → "Handball Favoriten" auswählen → Link wird
-automatisch ins Hinzufügen-Formular übernommen (Pendant zur Teilen-Funktion der Android-App).
-
-## Hintergrund-Sync & Benachrichtigungen – Einschränkungen
-
-Anders als bei einer nativen App kann eine Web-App das Betriebssystem nicht zuverlässig zwingen,
-sie regelmäßig im Hintergrund aufzuwecken:
-
-- **Periodic Background Sync** (automatischer Sync alle paar Stunden, auch wenn die App nicht
-  offen ist) funktioniert nur in Chrome/Edge auf Android, nur für installierte Apps, und nur wenn
-  Chrome die Seite anhand deiner Nutzung als "oft verwendet" einstuft – ein Wert, den weder du
-  noch die App direkt erzwingen können.
-- **Zuverlässiger Fallback, der immer funktioniert**: Die App synchronisiert automatisch beim
-  Öffnen, wenn der letzte Abgleich länger als 4 Stunden her ist. Wer die App also regelmäßig
-  öffnet, bekommt trotzdem aktuelle Daten.
-
-Für garantiert zuverlässigen Hintergrund-Sync unabhängig vom Nutzungsverhalten bleibt die native
-Android-App (Ordner `HandballFavoriten`) die robustere Wahl.
-
-## Architektur
+## Aufbau
 
 ```
-index.html         App-Hülle (Topbar, Toast, Benachrichtigungs-Banner)
-app.js              Hash-Router + komplette UI (Favoriten/Hinzufügen/Team-Detail)
-app.css             Styling
-manifest.webmanifest   PWA-Manifest (Icons, Name, share_target, Startverhalten)
-service-worker.js   Cache der App-Hülle, periodischer Sync, Benachrichtigungs-Klicks
-src/
-  nuligaClient.js    fetch() über den CORS-Proxy (siehe oben)
-  sync.js            gemeinsame Sync-Logik (App-Vordergrund + Service Worker)
-  notifications.js   registration.showNotification()-Wrapper
-  calendar.js         Google-Kalender-Links (unverändert von der Erweiterungs-Version)
-  teamNameUtils.js    (unverändert)
-  data/
-    models.js          Datentypen + Statistik-Definitionen (unverändert)
-    storage.js          IndexedDB-Speicher (Ersatz für chrome.storage.local)
-    repository.js       Lade-/Abgleichslogik (unverändert bis auf storage.js-Import)
-  parsers/             alle 6 nuLiga-HTML-Parser (unverändert von der Erweiterungs-Version)
+Handy (Chrome, installierte PWA)                GitHub Pages
+  App + Service Worker  ── lädt App-Dateien ──▶  index.html, app.js, src/ …
+        │  ▲
+        │  └── Push-Mitteilungen ◀─────────────┐
+        ▼                                      │
+Cloudflare Worker (kostenlos, eigener)         │
+  /proxy         reicht nuLiga-Seiten durch ───┼──▶ hvnb-handball.liga.nu
+  /subscription  speichert Push-Abo + Favoriten│
+  Cron 15 Min.   gleicht Spielpläne ab ────────┘
 ```
 
-Die Parser, Modelle und die Kalender-Logik sind **byte-identisch** mit der bereits gegen echte
-nuLiga-Seiten verifizierten und automatisiert getesteten Chrome-Erweiterungs-Version (26 Tests).
-Für den Wechsel auf IndexedDB wurde zusätzlich eine eigene Integrationstest-Suite (6 Tests, u.a.
-gegen eine simulierte IndexedDB und einen simulierten CORS-Proxy) erstellt und erfolgreich
-durchlaufen.
+**Warum ein Worker?** nuLiga hat keine öffentliche API und sendet keine CORS-Header. Ein Browser
+darf die Seiten von einer fremden Webseite aus deshalb nicht lesen. Öffentliche Gratis-Proxys
+waren beim Test (28.09.2026) ausgefallen oder kostenpflichtig und kommen wegen Werbung und Tracking
+ohnehin nicht in Frage. Außerdem kann nur ein Server zuverlässig im Hintergrund prüfen und
+Mitteilungen schicken: Das „Periodic Background Sync“ von Chrome löst nur selten und nach eigenem
+Ermessen aus.
+
+**Datensparsamkeit:** Der Worker speichert je Gerät nur das anonyme Push-Abo des Browsers und die
+IDs der Favoriten. Keine Namen, keine E-Mail-Adressen. Kontaktdaten und Namen von
+Verantwortlichen, die auf nuLiga-Seiten stehen, übernimmt die App nicht. Der Proxy lässt nur Seiten
+von `hvnb-handball.liga.nu` durch und nur Anfragen der eigenen App. Er ist also kein offener Proxy
+für Dritte. Zur Entlastung von nuLiga werden Seiten 10 Minuten zwischengespeichert.
+
+```
+index.html, app.js, app.css   Oberfläche (Hash-Router: Übersicht, Suche, Verein, Team-Detail)
+manifest.webmanifest          PWA-Manifest (Installation, Teilen-Ziel)
+service-worker.js             Offline-Hülle, Push empfangen, Tippen auf Mitteilung
+src/config.js                 Adresse des Workers
+src/push.js                   Push-Abo anlegen/abmelden, Favoriten an den Worker melden
+src/shared/matchEvents.js     Änderungserkennung + Mitteilungstexte (App UND Worker)
+src/data/                     IndexedDB-Speicher, Lade-/Abgleichslogik
+src/parsers/                  nuLiga-HTML-Parser (Mannschaft, Tabelle, Statistiken, Verein, Halle)
+worker/                       Cloudflare Worker (Proxy, Push, Cron) + Tests
+```
+
+## Einrichtung (einmalig)
+
+Voraussetzungen: [Node.js](https://nodejs.org) (LTS), Git, ein kostenloses
+[Cloudflare-Konto](https://dash.cloudflare.com/sign-up) und ein GitHub-Konto.
+
+### 1. Worker bei Cloudflare
+
+```powershell
+cd worker
+npm install
+npx wrangler login                       # öffnet den Browser, Zugriff erlauben
+npx wrangler kv namespace create KV      # ausgegebene id in wrangler.toml bei [[kv_namespaces]] eintragen
+npm run vapid                            # erzeugt Schlüssel: VAPID_PUBLIC_KEY in wrangler.toml eintragen
+npx wrangler secret put VAPID_PRIVATE_JWK   # Inhalt von vapid-private.json einfügen
+```
+
+In `worker/wrangler.toml` die Adresse der GitHub-Pages-Seite eintragen:
+
+```toml
+ALLOWED_ORIGINS = "https://<github-name>.github.io,http://localhost:8080"
+VAPID_SUBJECT = "https://<github-name>.github.io/<repo-name>/"
+```
+
+Dann `npx wrangler deploy`. Die angezeigte Adresse (`https://handball-favoriten.<…>.workers.dev`)
+in `src/config.js` als `WORKER_URL` eintragen.
+
+`vapid-private.json` nie committen (steht in `.gitignore`). Geht der Schlüssel verloren, einfach neu
+erzeugen. Nutzer müssen Mitteilungen dann einmal aus- und wieder einschalten.
+
+### 2. App auf GitHub Pages
+
+Repository anlegen, Dateien pushen, dann unter **Settings → Pages → Source** „Deploy from a branch“
+mit Branch `main` und Ordner `/ (root)` wählen. Nach 1–2 Minuten ist die App unter
+`https://<github-name>.github.io/<repo-name>/` erreichbar. GitHub Pages liefert automatisch HTTPS,
+das für Service Worker, Push und Installation Pflicht ist.
+
+Nach Änderungen an App-Dateien in `service-worker.js` die `CACHE_VERSION` erhöhen.
+
+### Auf dem Android-Handy installieren
+
+1. Die GitHub-Pages-Adresse in **Chrome** öffnen.
+2. Drei-Punkte-Menü → **„App installieren“** (oder „Zum Startbildschirm hinzufügen“).
+3. In der App auf **„Aktivieren“** tippen (oder auf die Glocke 🔕 oben) und Mitteilungen erlauben.
+
+Nicht nötig, aber hilfreich: In den Android-Einstellungen für die App den Akku-Modus auf
+„Nicht eingeschränkt“ stellen, damit Mitteilungen auch im Energiesparmodus sofort ankommen.
+
+## Lokal entwickeln und testen
+
+```powershell
+cd worker; npx wrangler dev --port 8787     # Worker lokal (ALLOWED_ORIGINS enthält localhost:8080)
+npx serve -l 8080 ..                        # App lokal (anderes Terminal)
+npm test                                     # Tests (Parser, Push-Verschlüsselung, Cron-Abgleich)
+```
+
+Für den lokalen Test `WORKER_URL` in `src/config.js` vorübergehend auf `http://localhost:8787`
+setzen und in der Content-Security-Policy in `index.html` bei `connect-src` ergänzen. Die
+Parser-Tests nutzen echte nuLiga-Seiten unter `worker/test/fixtures/`. Diese sind wegen der darin
+enthaltenen personenbezogenen Daten nicht im Repository und werden übersprungen, wenn sie fehlen.
+
+## Grenzen des kostenlosen Cloudflare-Tarifs
+
+Der Cron-Abgleich lädt pro Lauf bis zu 12 Mannschaften neu. Bei mehr beobachteten Mannschaften
+(über alle Nutzer zusammen) wechselt er sich ab. Bei 24 Mannschaften ist jede alle 30 Minuten dran,
+bei 48 jede Stunde. Erinnerungen vor Anpfiff kommen trotzdem pünktlich, weil sie aus dem
+gespeicherten Spielplan berechnet werden. Für einen Verein oder Freundeskreis reicht das gut. Für
+deutlich mehr Nutzer lohnt der bezahlte Workers-Tarif (5 $/Monat, dann `BATCH_SIZE` und
+`MAX_SUBREQUESTS` in `worker/src/index.js` erhöhen).
 
 ## Bekannte Einschränkungen
 
-- **Scope**: wie die anderen Varianten fest auf den Handballverband Niedersachsen-Bremen
-  (`hvnb-handball.liga.nu`) zugeschnitten.
-- **CORS-Proxy-Abhängigkeit**: siehe oben – der einzige Punkt, an dem diese Variante von einem
-  externen Dienst abhängt.
-- **Kein Kontextmenü** wie bei der Chrome-Erweiterung (Rechtsklick auf einen Link → Hinzufügen) –
-  dafür aber die Web-Share-Funktion (siehe oben), die auf Android ohnehin die natürlichere
-  Bedienung ist.
-- Hintergrund-Sync ist best-effort (siehe oben), nicht garantiert wie bei der nativen App.
+- Nur HVNB (`hvnb-handball.liga.nu`).
+- Die App liest nuLiga-HTML. Ändert nuLiga das Seitenlayout, müssen die Parser angepasst werden. Die
+  Tests in `worker/test/` zeigen dann schnell, wo.
+- Mitteilungen brauchen Chrome (bzw. einen Browser mit Web Push). Auf iPhones nur, wenn die App
+  zum Home-Bildschirm hinzugefügt wurde (ab iOS 16.4).

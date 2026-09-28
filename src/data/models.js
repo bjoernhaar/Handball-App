@@ -35,8 +35,9 @@
  * @property {number|null} awayScore
  * @property {string|null} halftimeInfo  - z.B. "9:10 zur Halbzeit"
  * @property {string|null} meetingId
- * @property {boolean} resultNotified
  * @property {boolean} reminderSent
+ * @property {{at: number, changes: Array<{field: string, label: string, from: any, to: any}>}|null} lastChange
+ *           - letzte erkannte Spielplanänderung (für den "geändert"-Hinweis)
  */
 
 /**
@@ -80,6 +81,9 @@ export const PLAYER_STAT_TYPES = [
   { key: "yellowCards", urlParam: "playerYellowCards", label: "Gelbe Karten", valueLabel: "Gelbe Karten" },
   { key: "redCards", urlParam: "playerRedCards", label: "Rote Karten", valueLabel: "Rote Karten" },
 ];
+
+/** Schlüssel, unter dem die Mannschaftsstatistik (groupAndTeams) neben den Spielerstatistiken liegt. */
+export const TEAM_STATS_KEY = "teams";
 
 export function favoriteTeamId(host, teamtable, championship, group) {
   return `${host}:${teamtable}:${championship}:${group}`;

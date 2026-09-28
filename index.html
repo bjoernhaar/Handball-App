@@ -3,8 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <!-- Keine Werbung, keine Tracker: Skripte/Styles/Bilder nur von dieser Seite,
+       Datenabrufe nur zum eigenen Cloudflare Worker (*.workers.dev). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.workers.dev; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+  <meta name="referrer" content="no-referrer" />
   <title>Handball Favoriten</title>
-  <meta name="description" content="Favoriten-Mannschaften aus dem HVNB-nuLiga mit Spielplan, Tabelle, Statistiken, Spielorten und Kalender-Export." />
+  <meta name="description" content="Lieblingsmannschaften aus dem HVNB-nuLiga: Spielplan, Tabelle, Mannschafts- und Spielerstatistiken, Mitteilungen bei Spielplanänderungen." />
   <meta name="theme-color" content="#1b5e20" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon192.png" />
@@ -21,7 +25,7 @@
   </header>
 
   <div id="notifyBanner" class="notify-banner" hidden>
-    <span>🔔 Benachrichtigungen bei neuen Ergebnissen und vor Spielbeginn aktivieren?</span>
+    <span>🔔 Mitteilungen bei Spielplanänderungen, neuen Ergebnissen und vor Anpfiff aktivieren?</span>
     <div class="notify-banner-actions">
       <button class="btn small enable">Aktivieren</button>
       <button class="btn small secondary dismiss">Nicht jetzt</button>

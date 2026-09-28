@@ -290,3 +290,73 @@ table.data-table tr.own-team { background: var(--green-light); font-weight: 600;
   font-size: 13px;
 }
 .notify-banner-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+.icon-btn.dark { color: #333; }
+.icon-btn.dark:hover { background: rgba(0, 0, 0, 0.06); }
+
+/* Suche */
+.search-row { display: flex; gap: 8px; }
+.search-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 16px; /* >= 16px verhindert das automatische Hineinzoomen auf Android/iOS */
+  font-family: inherit;
+}
+.search-row input:focus { outline: 2px solid var(--green); border-color: var(--green); }
+.hint-text { color: var(--text-muted); font-size: 13px; margin: 8px 0; }
+
+.list-item {
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.list-item:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); }
+.list-item:disabled { opacity: 0.7; cursor: default; }
+.list-item .info { flex: 1; min-width: 0; }
+.list-item .name { font-weight: 600; font-size: 15px; }
+.list-item .league { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+.list-item .chevron { color: var(--green); font-size: 22px; font-weight: 600; line-height: 1; }
+.list-item .fav-mark { color: var(--green); font-size: 20px; }
+.list-item.is-favorite { border-color: var(--green); background: var(--green-light); }
+.list-item.suggested { border-color: var(--green); }
+
+.link-section { margin-top: 28px; }
+.link-section summary { cursor: pointer; color: var(--green); font-size: 14px; margin-bottom: 12px; }
+
+/* Spielplan */
+.match-card.next-match { border-color: var(--green); box-shadow: 0 0 0 1px var(--green) inset; }
+.match-card.changed { border-left: 4px solid #ef6c00; }
+.match-card .open-date { color: #e65100; font-weight: 600; }
+.change-note { font-size: 13px; color: #8a4b00; margin-top: 6px; }
+.change-badge {
+  display: inline-block;
+  background: #fff3e0;
+  color: #e65100;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.favorite-card .next { color: var(--text); font-size: 13px; margin-top: 4px; }
+.favorite-card .next .change-badge { margin-left: 6px; margin-right: 0; }
+
+/* Mannschaftsstatistik */
+.stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.stat-tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.stat-tile .value { font-size: 20px; font-weight: 700; color: var(--green); }
+.stat-tile .label { font-size: 12px; color: var(--text-muted); margin-top: 2px; }

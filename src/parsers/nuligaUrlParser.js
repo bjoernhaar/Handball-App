@@ -66,6 +66,15 @@ export function buildPlayerStatsUrl(host, championship, group, displayType) {
   return `${base(host)}groupMeetingStatistics?${params.toString()}`;
 }
 
+export function buildClubSearchUrl(query) {
+  const params = new URLSearchParams({ federation: "HVNB", federations: "HVNB", searchFor: query });
+  return `${base(HVNB_HOST)}clubSearch?${params.toString()}`;
+}
+
+export function buildClubTeamsUrl(clubId) {
+  return `${base(HVNB_HOST)}clubTeams?${new URLSearchParams({ club: clubId }).toString()}`;
+}
+
 /** federation ist bewusst fest auf HVNB gesetzt (siehe README, "Nur HVNB"-Scope). */
 export function buildCourtInfoUrl(host, locationId) {
   const params = new URLSearchParams({ federation: "HVNB", location: locationId });

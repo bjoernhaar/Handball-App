@@ -4,20 +4,30 @@ import {
   getMatches,
   getTable,
   getPlayerStats,
+  getTeamStats,
+  addFavorite,
   addFavoriteFromUrl,
   removeFavorite,
   refreshTeam,
+  refreshAllFavorites,
   getVenue,
+  searchClubs,
+  getClubTeams,
+  resolveClubTeam,
+  teamIdFor,
 } from "./src/data/repository.js";
-import { PLAYER_STAT_TYPES } from "./src/data/models.js";
+import { PLAYER_STAT_TYPES, TEAM_STATS_KEY } from "./src/data/models.js";
 import { buildGoogleCalendarUrl, seasonCalendarLinks } from "./src/calendar.js";
 import { looselyEquals } from "./src/teamNameUtils.js";
 import { parseTeamPortraitLink } from "./src/parsers/nuligaUrlParser.js";
 import { runSync } from "./src/sync.js";
+import { pushSupported, getPushState, enablePush, disablePush, syncPushFavorites } from "./src/push.js";
 
 const LAST_SYNC_KEY = "lastGlobalSyncAt";
-const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 Stunden, wie in den anderen Varianten
-const SYNC_TAG = "handball-sync";
+const SYNC_INTERVAL_MS = 30 * 60 * 1000; // beim Öffnen höchstens alle 30 Min. alles neu laden
+const TEAM_STALE_MS = 15 * 60 * 1000; // Team-Detail lädt im Hintergrund nach, wenn älter
+const CHANGE_HINT_MS = 14 * 24 * 60 * 60 * 1000; // "geändert"-Hinweis 14 Tage lang zeigen
+const BANNER_DISMISSED_KEY = "notifyBannerDismissedAt";
 
 const root = document.getElementById("app-root");
 const pageTitle = document.getElementById("pageTitle");
@@ -38,9 +48,12 @@ function navigate(hash) {
   location.hash = hash;
 }
 
-function setHeader({ title, showBack = false, actions = [] }) {
+let backTarget = "#/";
+
+function setHeader({ title, showBack = false, backTo = "#/", actions = [] }) {
   pageTitle.textContent = title;
   backBtn.hidden = !showBack;
+  backTarget = backTo;
   topbarActions.innerHTML = "";
   for (const action of actions) {
     const btn = document.createElement("button");
@@ -54,7 +67,7 @@ function setHeader({ title, showBack = false, actions = [] }) {
   }
 }
 
-backBtn.addEventListener("click", () => navigate("#/"));
+backBtn.addEventListener("click", () => navigate(backTarget));
 
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
@@ -113,7 +126,9 @@ async function router() {
   const { parts, query } = parseHash();
   try {
     if (parts[0] === "add") {
-      await renderAddTeam(query.get("link"));
+      await renderAddTeam(query.get("link"), query.get("q"));
+    } else if (parts[0] === "club" && parts[1]) {
+      await renderClubTeams(decodeURIComponent(parts[1]), query.get("name") || "");
     } else if (parts[0] === "team" && parts[1]) {
       await renderTeamDetail(decodeURIComponent(parts[1]));
     } else {
@@ -131,10 +146,10 @@ async function router() {
 }
 
 window.addEventListener("hashchange", router);
-router();
+// Erster router()-Aufruf ganz am Ende der Datei, wenn alle Modul-Variablen initialisiert sind.
 
 // ---------------------------------------------------------------------------
-// Service Worker: Installierbarkeit, Offline-Hülle, Hintergrund-Sync
+// Service Worker: Installierbarkeit, Offline-Hülle, Push-Mitteilungen
 // ---------------------------------------------------------------------------
 
 let swRegistration = null;
@@ -142,47 +157,46 @@ let swRegistration = null;
 async function initServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   try {
-    swRegistration = await navigator.serviceWorker.register("./service-worker.js", { type: "module" });
+    swRegistration = await navigator.serviceWorker.register("./service-worker.js");
   } catch (err) {
     console.warn("Service Worker konnte nicht registriert werden:", err);
     return;
   }
 
-  // Tippen auf eine Benachrichtigung schickt uns hier eine Nachricht mit dem
+  // Tippen auf eine Mitteilung schickt uns hier eine Nachricht mit dem
   // Ziel-Hash (siehe service-worker.js, notificationclick).
   navigator.serviceWorker.addEventListener("message", (event) => {
     if (event.data && event.data.type === "navigate") {
-      navigate(event.data.hash || "#/");
+      const hash = event.data.hash || "#/";
+      if (location.hash === hash) router();
+      else navigate(hash);
     }
   });
+}
 
-  // Periodic Background Sync: nur in Chrome/Edge auf Android, nur für
-  // installierte Apps, und nur wenn Chrome die Seite als "oft genutzt"
-  // einstuft - rein optionaler Zusatz, kein Ersatz für den zuverlässigen
-  // Sync-beim-Öffnen unten.
+function storageGet(key) {
   try {
-    const reg = await navigator.serviceWorker.ready;
-    if ("periodicSync" in reg && "permissions" in navigator) {
-      const status = await navigator.permissions.query({ name: "periodic-background-sync" });
-      if (status.state === "granted") {
-        await reg.periodicSync.register(SYNC_TAG, { minInterval: SYNC_INTERVAL_MS });
-      }
-    }
-  } catch (err) {
-    // Nicht unterstützt oder nicht erlaubt - kein Problem, siehe Hinweis oben.
-    console.info("Periodic Background Sync nicht verfügbar:", err.message);
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // privater Modus o.Ä. - dann eben ohne Merken
   }
 }
 
 async function syncIfStale() {
   try {
-    const stored = localStorage.getItem(LAST_SYNC_KEY);
-    const lastSync = stored ? Number(stored) : 0;
+    const lastSync = Number(storageGet(LAST_SYNC_KEY)) || 0;
     if (lastSync && Date.now() - lastSync < SYNC_INTERVAL_MS) return;
 
-    const reg = swRegistration || (await navigator.serviceWorker.ready.catch(() => null));
-    await runSync(reg);
-    localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
+    await runSync(swRegistration);
+    storageSet(LAST_SYNC_KEY, String(Date.now()));
 
     // Falls wir gerade auf der Übersicht sind, Ergebnisse sofort anzeigen.
     if (!parseHash().parts.length) router();
@@ -191,41 +205,84 @@ async function syncIfStale() {
   }
 }
 
-initServiceWorker().then(syncIfStale);
-
-// ---------------------------------------------------------------------------
-// Benachrichtigungen aktivieren (Banner)
-// ---------------------------------------------------------------------------
-
-function updateNotifyBanner() {
-  if (!("Notification" in window) || Notification.permission !== "default") {
-    notifyBanner.hidden = true;
-    return;
+async function syncPushQuietly(force = false) {
+  try {
+    await syncPushFavorites(swRegistration, await getFavorites(), { force });
+  } catch (err) {
+    console.warn("Favoriten konnten nicht an den Server übertragen werden:", err);
   }
-  notifyBanner.hidden = false;
 }
 
-notifyBanner.querySelector("button.enable").addEventListener("click", async () => {
+initServiceWorker()
+  .then(() => Promise.all([syncIfStale(), syncPushQuietly()]))
+  .then(updateNotifyBanner);
+
+// ---------------------------------------------------------------------------
+// Mitteilungen aktivieren (Banner + Glocke in der Übersicht)
+// ---------------------------------------------------------------------------
+
+async function updateNotifyBanner() {
+  const state = await getPushState(swRegistration);
+  const dismissedAt = Number(storageGet(BANNER_DISMISSED_KEY)) || 0;
+  const dismissedRecently = Date.now() - dismissedAt < 30 * 24 * 60 * 60 * 1000;
+  const hasFavorites = (await getFavorites()).length > 0;
+  notifyBanner.hidden = state !== "off" || dismissedRecently || !hasFavorites;
+}
+
+async function turnOnPush() {
   try {
-    await Notification.requestPermission();
-  } finally {
-    updateNotifyBanner();
+    await enablePush(swRegistration, await getFavorites());
+    showToast("Mitteilungen aktiviert");
+  } catch (err) {
+    showToast(err.message);
   }
-});
+  await updateNotifyBanner();
+  if (!parseHash().parts.length) renderFavorites();
+}
+
+async function togglePush() {
+  const state = await getPushState(swRegistration);
+  if (state === "on") {
+    if (!confirm("Mitteilungen für dieses Gerät ausschalten?")) return;
+    await disablePush(swRegistration);
+    showToast("Mitteilungen ausgeschaltet");
+    renderFavorites();
+  } else if (state === "denied") {
+    alert(
+      "Mitteilungen sind für diese App blockiert. Du kannst sie in Chrome unter Einstellungen → Website-Einstellungen → Benachrichtigungen wieder erlauben."
+    );
+  } else if (state === "unsupported") {
+    alert("Dieser Browser unterstützt keine Push-Mitteilungen. Tipp: Die App in Chrome öffnen und installieren.");
+  } else {
+    turnOnPush();
+  }
+}
+
+notifyBanner.querySelector("button.enable").addEventListener("click", turnOnPush);
 notifyBanner.querySelector("button.dismiss").addEventListener("click", () => {
+  storageSet(BANNER_DISMISSED_KEY, String(Date.now()));
   notifyBanner.hidden = true;
 });
-updateNotifyBanner();
 
 // ---------------------------------------------------------------------------
 // Favoriten-Übersicht
 // ---------------------------------------------------------------------------
 
 async function renderFavorites() {
+  const pushState = await getPushState(swRegistration);
+  const bell = {
+    on: { icon: "🔔", title: "Mitteilungen sind an – tippen zum Ausschalten" },
+    off: { icon: "🔕", title: "Mitteilungen einschalten" },
+    denied: { icon: "🔕", title: "Mitteilungen blockiert" },
+    unsupported: null,
+  }[pushState];
   setHeader({
     title: "Handball Favoriten",
     showBack: false,
-    actions: [{ icon: "⟳", title: "Alle aktualisieren", onClick: refreshAllFromList }],
+    actions: [
+      ...(bell ? [{ ...bell, onClick: togglePush }] : []),
+      { icon: "⟳", title: "Alle aktualisieren", onClick: refreshAllFromList },
+    ],
   });
 
   clearRoot();
@@ -236,27 +293,36 @@ async function renderFavorites() {
       el("div", { class: "empty-state" }, [
         el("div", { class: "big-icon", text: "🤾" }),
         el("h2", { text: "Noch keine Lieblingsmannschaft" }),
-        el("p", {
-          text:
-            'Füge über "+" den Link einer nuLiga-Mannschaftsseite (teamPortrait) hinzu, z.B. von hvnb-handball.liga.nu.',
-        }),
+        el("p", { text: 'Tippe auf "+" und suche deinen Verein – z.B. "Jever".' }),
+        el("button", { class: "btn", text: "Mannschaft suchen", onclick: () => navigate("#add") }),
       ])
     );
   } else {
     const list = el("div", {});
-    for (const team of favorites) {
-      list.appendChild(renderFavoriteCard(team));
-    }
+    const allMatches = await Promise.all(favorites.map((t) => getMatches(t.id)));
+    favorites.forEach((team, i) => list.appendChild(renderFavoriteCard(team, allMatches[i])));
     root.appendChild(list);
   }
 
-  root.appendChild(el("button", { class: "fab", title: "Team hinzufügen", onclick: () => navigate("#add") }, "+"));
+  root.appendChild(el("button", { class: "fab", title: "Mannschaft suchen", onclick: () => navigate("#add") }, "+"));
 }
 
-function renderFavoriteCard(team) {
+function renderFavoriteCard(team, matches = []) {
+  const today = todayIso();
+  const next = matches.find((m) => m.homeScore == null && m.date && m.date >= today);
+  let nextLine = null;
+  if (next) {
+    const opponent = looselyEquals(next.homeTeam, team.clubName) ? next.awayTeam : next.homeTeam;
+    const recentlyChanged = next.lastChange && Date.now() - next.lastChange.at < CHANGE_HINT_MS;
+    nextLine = el("div", { class: "next" }, [
+      `Nächstes Spiel: ${formatDateTime(next)} · ${opponent}`,
+      recentlyChanged ? el("span", { class: "change-badge", text: "geändert" }) : null,
+    ]);
+  }
   const info = el("div", { class: "info" }, [
     el("div", { class: "name", text: team.displayName }),
     team.leagueName ? el("div", { class: "league", text: team.leagueName }) : null,
+    nextLine,
     !team.lastSyncedAt ? el("div", { class: "hint", text: "Noch nicht aktualisiert – zum Öffnen tippen" }) : null,
   ]);
 
@@ -266,6 +332,7 @@ function renderFavoriteCard(team) {
     if (!confirm(`"${team.displayName}" aus den Favoriten entfernen?`)) return;
     await removeFavorite(team.id);
     showToast("Favorit entfernt");
+    syncPushQuietly(true);
     renderFavorites();
   });
 
@@ -279,8 +346,8 @@ function renderFavoriteCard(team) {
 async function refreshAllFromList() {
   showToast("Aktualisiere alle Favoriten …");
   const favorites = await getFavorites();
-  await Promise.all(favorites.map((t) => refreshTeam(t.id).catch((err) => console.warn(err))));
-  showToast("Aktualisiert");
+  const outcomes = await refreshAllFavorites();
+  showToast(outcomes.length === favorites.length ? "Aktualisiert" : "Nicht alle Favoriten konnten aktualisiert werden");
   renderFavorites();
 }
 
@@ -288,52 +355,237 @@ async function refreshAllFromList() {
 // Team hinzufügen
 // ---------------------------------------------------------------------------
 
-async function renderAddTeam(prefillLink) {
-  setHeader({ title: "Team hinzufügen", showBack: true });
+async function afterFavoriteAdded(team) {
+  showToast(`"${team.displayName}" hinzugefügt`);
+  syncPushQuietly(true);
+  updateNotifyBanner();
+  navigate(`#team/${encodeURIComponent(team.id)}`);
+}
+
+async function renderAddTeam(prefillLink, prefillQuery) {
+  setHeader({ title: "Mannschaft suchen", showBack: true });
   clearRoot();
 
+  // --- Vereinssuche -------------------------------------------------------
+  const input = el("input", {
+    type: "search",
+    placeholder: "Vereinsname oder Ort, z.B. Jever",
+    enterkeyhint: "search",
+    autocomplete: "off",
+  });
+  if (prefillQuery) input.value = prefillQuery;
+  const searchBtn = el("button", { class: "btn", text: "Suchen" });
+  const results = el("div", { class: "result-list" });
+
+  async function search() {
+    const query = input.value.trim();
+    if (query.length < 3) {
+      results.replaceChildren(el("p", { class: "hint-text", text: "Bitte mindestens 3 Zeichen eingeben." }));
+      return;
+    }
+    history.replaceState(null, "", `#add?q=${encodeURIComponent(query)}`);
+    lastSearchQuery = query;
+    results.replaceChildren(el("div", { class: "spinner" }));
+    searchBtn.disabled = true;
+    try {
+      const clubs = await searchClubs(query);
+      results.replaceChildren();
+      if (clubs.length === 0) {
+        results.appendChild(el("p", { class: "hint-text", text: `Kein Verein zu „${query}“ gefunden.` }));
+      }
+      for (const club of clubs) {
+        results.appendChild(
+          el(
+            "button",
+            {
+              class: "list-item",
+              onclick: () => navigate(`#club/${encodeURIComponent(club.clubId)}?name=${encodeURIComponent(club.name)}`),
+            },
+            [
+              el("div", { class: "info" }, [
+                el("div", { class: "name", text: club.name }),
+                club.members.length ? el("div", { class: "league", text: club.members.join(" · ") }) : null,
+              ]),
+              el("span", { class: "chevron", text: "›" }),
+            ]
+          )
+        );
+      }
+    } catch (err) {
+      results.replaceChildren(el("p", { class: "error-text", text: err.message }));
+    }
+    searchBtn.disabled = false;
+  }
+  searchBtn.addEventListener("click", search);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") search();
+  });
+
+  // --- Alternative: Link einfügen -----------------------------------------
   const textarea = el("textarea", { rows: "3", placeholder: "nuLiga-Mannschaftsportrait-Link hier einfügen …" });
   if (prefillLink) textarea.value = prefillLink;
-
   const errorBox = el("div", { class: "error-text" });
   errorBox.hidden = true;
+  const submitBtn = el("button", { class: "btn secondary", text: "Link hinzufügen" });
 
-  const submitBtn = el("button", { class: "btn", text: "Hinzufügen" });
-
-  async function submit() {
+  async function submitLink() {
     const value = textarea.value.trim();
     if (!value) return;
     submitBtn.disabled = true;
     submitBtn.textContent = "Wird geladen …";
     errorBox.hidden = true;
     try {
-      const team = await addFavoriteFromUrl(value);
-      showToast(`"${team.displayName}" hinzugefügt`);
-      navigate(`#team/${encodeURIComponent(team.id)}`);
+      await afterFavoriteAdded(await addFavoriteFromUrl(value));
     } catch (err) {
       errorBox.textContent = err.message;
       errorBox.hidden = false;
       submitBtn.disabled = false;
-      submitBtn.textContent = "Hinzufügen";
+      submitBtn.textContent = "Link hinzufügen";
     }
   }
-  submitBtn.addEventListener("click", submit);
+  submitBtn.addEventListener("click", submitLink);
+
+  const linkSection = el("details", { class: "link-section" }, [
+    el("summary", { text: "Oder: Link einer nuLiga-Mannschaftsseite einfügen" }),
+    el("div", { class: "field" }, [textarea]),
+    submitBtn,
+    errorBox,
+    el("div", { class: "info-box" }, [
+      "Du kannst den Link auch direkt aus Chrome über „Teilen“ an diese App schicken, wenn sie installiert ist.",
+    ]),
+  ]);
+  if (prefillLink) linkSection.open = true;
 
   root.appendChild(
     el("div", {}, [
-      el("div", { class: "field" }, [el("label", { text: "Link der teamPortrait-Seite" }), textarea]),
-      submitBtn,
-      errorBox,
-      el("div", { class: "info-box" }, [
-        "Tipp: Auf hvnb-handball.liga.nu die Mannschaftsseite („Mannschaftsportrait“) öffnen, Link kopieren und hier einfügen. " +
-          "Du kannst den Link auch direkt aus Chrome über „Teilen“ an diese App schicken, wenn sie installiert ist.",
+      el("div", { class: "field" }, [
+        el("label", { text: "Verein im Handballverband Niedersachsen-Bremen" }),
+        el("div", { class: "search-row" }, [input, searchBtn]),
       ]),
+      results,
+      linkSection,
     ])
   );
 
-  if (prefillLink) {
-    submit();
+  if (prefillLink) submitLink();
+  else if (prefillQuery) search();
+  else input.focus();
+}
+
+// ---------------------------------------------------------------------------
+// Mannschaften eines Vereins
+// ---------------------------------------------------------------------------
+
+/** Zurück aus der Vereinsansicht führt wieder zur letzten Suche. */
+let lastSearchQuery = null;
+function lastSearchHash() {
+  return lastSearchQuery ? `#add?q=${encodeURIComponent(lastSearchQuery)}` : "#add";
+}
+
+async function renderClubTeams(clubId, clubNameHint) {
+  setHeader({ title: clubNameHint || "Verein", showBack: true, backTo: lastSearchHash() });
+  clearRoot();
+  root.appendChild(el("div", { class: "spinner" }));
+
+  let data;
+  try {
+    data = await getClubTeams(clubId);
+  } catch (err) {
+    clearRoot();
+    root.appendChild(el("p", { class: "error-text", text: err.message }));
+    return;
   }
+  const clubName = data.clubName || clubNameHint;
+  setHeader({ title: clubName, showBack: true, backTo: lastSearchHash() });
+  clearRoot();
+
+  if (data.teams.length === 0) {
+    root.appendChild(el("div", { class: "empty-state" }, "Für diesen Verein sind aktuell keine Mannschaften gemeldet."));
+    return;
+  }
+
+  const favoriteKeys = new Set((await getFavorites()).map((f) => `${f.championship}|${f.group}`));
+  let section = null;
+  for (const team of data.teams) {
+    if (team.section !== section) {
+      section = team.section;
+      root.appendChild(el("div", { class: "section-title", text: section || "Spielbetrieb" }));
+    }
+    const isFav = favoriteKeys.has(`${team.championship}|${team.group}`);
+    const status = el("span", { class: isFav ? "fav-mark" : "chevron", text: isFav ? "★" : "+" });
+    const item = el("button", { class: "list-item" + (isFav ? " is-favorite" : "") }, [
+      el("div", { class: "info" }, [
+        el("div", { class: "name", text: team.teamLabel }),
+        el("div", { class: "league", text: team.leagueName + (team.rank ? ` · Platz ${team.rank}` : "") }),
+      ]),
+      status,
+    ]);
+    item.addEventListener("click", async () => {
+      if (isFav) {
+        const fav = (await getFavorites()).find((f) => f.championship === team.championship && f.group === team.group);
+        if (fav) navigate(`#team/${encodeURIComponent(fav.id)}`);
+        return;
+      }
+      item.disabled = true;
+      status.textContent = "⏳";
+      try {
+        const { row, rows } = await resolveClubTeam(clubName, team);
+        const chosen = row || (await pickTeamFromGroup(team, rows, clubName));
+        if (!chosen) {
+          item.disabled = false;
+          status.textContent = "+";
+          return;
+        }
+        await afterFavoriteAdded(
+          await addFavorite({ teamtable: chosen.teamtable, championship: team.championship, group: team.group })
+        );
+      } catch (err) {
+        showToast(err.message);
+        item.disabled = false;
+        status.textContent = "+";
+      }
+    });
+    root.appendChild(item);
+  }
+}
+
+/**
+ * Wenn die Mannschaft in der Staffeltabelle nicht eindeutig erkennbar ist
+ * (z.B. Spielgemeinschaften mit abgekürztem Namen), wählt der Nutzer selbst.
+ * @returns {Promise<object|null>}
+ */
+function pickTeamFromGroup(clubTeam, rows, clubName) {
+  return new Promise((resolve) => {
+    const backdrop = el("div", { class: "modal-backdrop" });
+    const sheet = el("div", { class: "modal-sheet" });
+    backdrop.appendChild(sheet);
+    const close = (value) => {
+      backdrop.remove();
+      resolve(value);
+    };
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop) close(null);
+    });
+
+    sheet.appendChild(
+      el("div", { class: "close-row" }, [el("button", { class: "icon-btn dark", text: "✕", onclick: () => close(null) })])
+    );
+    sheet.appendChild(el("h2", { text: "Welche Mannschaft?" }));
+    sheet.appendChild(el("p", { class: "hint-text", text: `${clubTeam.teamLabel} · ${clubTeam.leagueName}` }));
+    const sorted = [...rows].sort(
+      (a, b) => Number(looselyEquals(b.teamName, clubName)) - Number(looselyEquals(a.teamName, clubName))
+    );
+    for (const row of sorted) {
+      sheet.appendChild(
+        el(
+          "button",
+          { class: "list-item" + (looselyEquals(row.teamName, clubName) ? " suggested" : ""), onclick: () => close(row) },
+          [el("div", { class: "info" }, [el("div", { class: "name", text: row.teamName })]), el("span", { class: "chevron", text: "+" })]
+        )
+      );
+    }
+    document.body.appendChild(backdrop);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -341,18 +593,36 @@ async function renderAddTeam(prefillLink) {
 // ---------------------------------------------------------------------------
 
 let activeDetailTab = "schedule";
-let activeStatKey = PLAYER_STAT_TYPES[0].key;
+let activeStatKey = TEAM_STATS_KEY;
 
 async function renderTeamDetail(id) {
-  const team = await getFavorite(id);
+  let team = await getFavorite(id);
   if (!team) {
     navigate("#/");
     return;
   }
 
   let refreshing = false;
+  const isCurrent = () => location.hash === `#team/${encodeURIComponent(id)}`;
 
-  const renderHeader = () => {
+  async function refresh({ quiet = false } = {}) {
+    refreshing = true;
+    renderHeader();
+    try {
+      await refreshTeam(id);
+      team = (await getFavorite(id)) || team;
+      if (!quiet) showToast("Aktualisiert");
+    } catch (err) {
+      if (!quiet) showToast("Aktualisierung fehlgeschlagen: " + err.message);
+    }
+    refreshing = false;
+    if (!isCurrent()) return;
+    renderHeader();
+    renderBody();
+  }
+
+  function renderHeader() {
+    if (!isCurrent()) return;
     setHeader({
       title: team.displayName,
       showBack: true,
@@ -361,25 +631,15 @@ async function renderTeamDetail(id) {
           icon: refreshing ? "⏳" : "⟳",
           title: "Aktualisieren",
           disabled: refreshing,
-          onClick: async () => {
-            refreshing = true;
-            renderHeader();
-            try {
-              await refreshTeam(id);
-              showToast("Aktualisiert");
-            } catch (err) {
-              showToast("Aktualisierung fehlgeschlagen: " + err.message);
-            }
-            refreshing = false;
-            renderBody();
-          },
+          onClick: () => refresh(),
         },
       ],
     });
-  };
+  }
   renderHeader();
 
   async function renderBody() {
+    const scrollY = window.scrollY;
     clearRoot();
 
     const tabs = el("div", { class: "tabs" });
@@ -417,9 +677,15 @@ async function renderTeamDetail(id) {
       content.innerHTML = "";
       content.appendChild(await renderStatsTab(team));
     }
+    window.scrollTo(0, scrollY);
   }
 
   await renderBody();
+
+  // z.B. nach Tippen auf eine Mitteilung: veraltete Daten still nachladen.
+  if (!team.lastSyncedAt || Date.now() - team.lastSyncedAt > TEAM_STALE_MS) {
+    refresh({ quiet: true });
+  }
 }
 
 function renderScheduleTab(team, matches) {
@@ -444,15 +710,42 @@ function renderScheduleTab(team, matches) {
     return container;
   }
 
+  let nextMarked = false;
   for (const match of matches) {
-    container.appendChild(renderMatchCard(team, match));
+    const card = renderMatchCard(team, match);
+    if (!nextMarked && match.homeScore == null && match.date && match.date >= todayIso()) {
+      card.classList.add("next-match");
+      card.id = "next-match";
+      nextMarked = true;
+    }
+    container.appendChild(card);
   }
   return container;
 }
 
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function formatChangeValue(field, value) {
+  if (!value) return "offen";
+  if (field === "date") {
+    const [y, m, d] = value.split("-");
+    return `${d}.${m}.${y}`;
+  }
+  if (field === "time") return `${value} Uhr`;
+  return value;
+}
+
 function renderMatchCard(team, match) {
   const dateLabel = formatDateTime(match);
-  const row1 = el("div", { class: "row1" }, [el("span", { text: dateLabel }), el("span", { text: "Nr. " + match.matchNumber })]);
+  const row1 = el("div", { class: "row1" }, [
+    dateLabel
+      ? el("span", { text: dateLabel })
+      : el("span", { class: "open-date", text: match.note || "Termin offen" }),
+    el("span", { text: "Nr. " + match.matchNumber }),
+  ]);
 
   const homeIsOwn = looselyEquals(match.homeTeam, team.clubName);
   const awayIsOwn = looselyEquals(match.awayTeam, team.clubName);
@@ -495,7 +788,21 @@ function renderMatchCard(team, match) {
     );
   }
 
-  return el("div", { class: "match-card" }, [row1, teamsLine, row3]);
+  let changeNote = null;
+  if (match.lastChange && Date.now() - match.lastChange.at < CHANGE_HINT_MS && match.homeScore == null) {
+    changeNote = el(
+      "div",
+      { class: "change-note" },
+      [
+        el("span", { class: "change-badge", text: "geändert" }),
+        match.lastChange.changes
+          .map((c) => `${c.label}: ${formatChangeValue(c.field, c.from)} → ${formatChangeValue(c.field, c.to)}`)
+          .join(" · "),
+      ]
+    );
+  }
+
+  return el("div", { class: "match-card" + (changeNote ? " changed" : "") }, [row1, teamsLine, changeNote, row3]);
 }
 
 function formatDateTime(match) {
@@ -551,7 +858,7 @@ function renderTableTab(team, rows) {
 async function renderStatsTab(team) {
   const container = el("div", {});
   const chips = el("div", { class: "stat-chips" });
-  for (const type of PLAYER_STAT_TYPES) {
+  for (const type of [{ key: TEAM_STATS_KEY, label: "Mannschaften" }, ...PLAYER_STAT_TYPES]) {
     chips.appendChild(
       el("button", {
         class: "stat-chip" + (activeStatKey === type.key ? " active" : ""),
@@ -566,6 +873,11 @@ async function renderStatsTab(team) {
     );
   }
   container.appendChild(chips);
+
+  if (activeStatKey === TEAM_STATS_KEY) {
+    container.appendChild(renderTeamStats(team, await getTeamStats(team.id)));
+    return container;
+  }
 
   const type = PLAYER_STAT_TYPES.find((t) => t.key === activeStatKey);
   const rows = await getPlayerStats(team.id, activeStatKey);
@@ -601,6 +913,72 @@ async function renderStatsTab(team) {
   }
   container.appendChild(el("div", { style: "overflow-x:auto;" }, table));
   return container;
+}
+
+/** Mannschaftsvergleich der Staffel (nuLiga "Gruppen- und Mannschaftsstatistik"). */
+function renderTeamStats(team, stats) {
+  const wrap = el("div", {});
+  if (!stats.teams.length) {
+    wrap.appendChild(el("div", { class: "empty-state" }, "Noch keine Mannschaftsstatistik – aktualisieren (⟳) lädt sie nach."));
+    return wrap;
+  }
+
+  const v = (s, label, kind = "total") => (s.metrics[label] && s.metrics[label][kind]) || "–";
+  const own = stats.teams.find((s) => looselyEquals(s.name, team.clubName));
+
+  if (own) {
+    const tiles = [
+      ["Tore/Spiel", v(own, "Tore", "perGame")],
+      ["7m-Quote", v(own, "7m-Trefferquote")],
+      ["Zeitstrafen/Spiel", v(own, "Zeitstrafen gesamt", "perGame")],
+      ["Zuschauer/Spiel", v(own, "Zuschauer", "perGame")],
+    ].filter(([, value]) => value && value !== "–" && value !== "-");
+    wrap.appendChild(
+      el(
+        "div",
+        { class: "stat-tiles" },
+        tiles.map(([label, value]) =>
+          el("div", { class: "stat-tile" }, [el("div", { class: "value", text: value }), el("div", { class: "label", text: label })])
+        )
+      )
+    );
+  }
+
+  const columns = [
+    ["Sp", (s) => String(s.played ?? "–")],
+    ["Tore", (s) => v(s, "Tore")],
+    ["∅", (s) => v(s, "Tore", "perGame")],
+    ["7m", (s) => `${v(s, "7m-Tore")}/${v(s, "7m-Versuche")}`],
+    ["7m %", (s) => v(s, "7m-Trefferquote")],
+    ["2 Min", (s) => v(s, "Zeitstrafen gesamt")],
+    ["Gelb", (s) => v(s, "Gelbe Karten")],
+    ["Rot", (s) => v(s, "Rote Karten")],
+  ];
+  const sorted = [...stats.teams].sort(
+    (a, b) => parseFloat(v(b, "Tore", "perGame").replace(",", ".")) - parseFloat(v(a, "Tore", "perGame").replace(",", ".")) || 0
+  );
+
+  const table = el("table", { class: "data-table" });
+  table.appendChild(el("tr", {}, [el("th", { text: "Mannschaft" }), ...columns.map(([h]) => el("th", { text: h }))]));
+  for (const s of sorted) {
+    table.appendChild(
+      el("tr", { class: s === own ? "own-team" : "" }, [el("td", { text: s.name }), ...columns.map(([, f]) => el("td", { text: f(s) }))])
+    );
+  }
+  wrap.appendChild(el("div", { style: "overflow-x:auto;" }, table));
+
+  if (stats.group) {
+    wrap.appendChild(
+      el("p", {
+        class: "hint-text",
+        text: `Staffel gesamt: ${stats.group.played} Spiele · ${v(stats.group, "Tore", "perGame")} Tore/Spiel · 7m-Quote ${v(
+          stats.group,
+          "7m-Trefferquote"
+        )}`,
+      })
+    );
+  }
+  return wrap;
 }
 
 // ---------------------------------------------------------------------------
@@ -652,3 +1030,5 @@ async function openVenueModal(team, match) {
     body.appendChild(el("p", { class: "error-text", text: "Adresse konnte nicht geladen werden: " + err.message }));
   }
 }
+
+router();

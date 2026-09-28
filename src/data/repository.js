@@ -6,17 +6,23 @@
 import { storage } from "./storage.js";
 import { fetchDocument } from "../nuligaClient.js";
 import {
+  HVNB_HOST,
   parseTeamPortraitLink,
   buildTeamPortraitUrl,
   buildGroupPageUrl,
   buildPlayerStatsUrl,
   buildCourtInfoUrl,
+  buildClubSearchUrl,
+  buildClubTeamsUrl,
 } from "../parsers/nuligaUrlParser.js";
 import { parseTeamPortrait } from "../parsers/teamPortraitParser.js";
 import { parseGroupTable } from "../parsers/groupTableParser.js";
 import { parsePlayerStats } from "../parsers/playerStatsParser.js";
+import { parseTeamStats } from "../parsers/teamStatsParser.js";
 import { parseVenue } from "../parsers/venueParser.js";
-import { PLAYER_STAT_TYPES, favoriteTeamId } from "./models.js";
+import { parseClubSearch, parseClubTeams, findClubTeamRow } from "../parsers/clubParsers.js";
+import { PLAYER_STAT_TYPES, TEAM_STATS_KEY, favoriteTeamId } from "./models.js";
+import { diffMatches, matchesStartingBetween, EVENT_TYPES, REMINDER_LEAD_MINUTES } from "../shared/matchEvents.js";
 
 const KEYS = {
   favorites: "favorites",
@@ -25,9 +31,6 @@ const KEYS = {
   playerStats: "playerStats",
   venues: "venues",
 };
-
-/** Ein Spiel gilt als "bald beginnend", wenn es innerhalb dieses Fensters liegt. */
-const UPCOMING_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 Stunden, wie in der Android-Version
 
 async function getAll(key) {
   const result = await storage.get(key);
@@ -64,6 +67,42 @@ export async function getPlayerStats(id, statKey) {
   return (map[id] && map[id][statKey]) || [];
 }
 
+/** @returns {Promise<{group: object|null, teams: object[]}>} */
+export async function getTeamStats(id) {
+  const map = await getAll(KEYS.playerStats);
+  return (map[id] && map[id][TEAM_STATS_KEY]) || { group: null, teams: [] };
+}
+
+export function teamIdFor(teamtable, championship, group) {
+  return favoriteTeamId(HVNB_HOST, teamtable, championship, group);
+}
+
+// ---------------------------------------------------------------------------
+// Mannschaftssuche: Verein suchen -> Mannschaften des Vereins -> Mannschaft
+// in der Staffeltabelle finden (dort steht die teamtable-ID).
+// ---------------------------------------------------------------------------
+
+export async function searchClubs(query) {
+  const url = buildClubSearchUrl(query);
+  const { doc, url: pageUrl } = await fetchDocument(url);
+  return parseClubSearch(doc, pageUrl);
+}
+
+export async function getClubTeams(clubId) {
+  const { doc, url } = await fetchDocument(buildClubTeamsUrl(clubId));
+  return parseClubTeams(doc, url);
+}
+
+/**
+ * @returns {Promise<{row: object|null, rows: object[]}>} row = eindeutig gefundene
+ *   Mannschaft; sonst null und rows = alle Mannschaften der Staffel zur Auswahl.
+ */
+export async function resolveClubTeam(clubName, clubTeam) {
+  const { doc, url } = await fetchDocument(buildGroupPageUrl(HVNB_HOST, clubTeam.championship, clubTeam.group));
+  const rows = parseGroupTable(doc, url).filter((r) => r.teamtable);
+  return { row: findClubTeamRow(rows, clubName, clubTeam.teamLabel), rows };
+}
+
 /**
  * Fügt ein Team anhand eines eingefügten/geteilten teamPortrait-Links hinzu.
  * Wirft einen Error mit einer für die UI verständlichen deutschen Meldung,
@@ -76,142 +115,186 @@ export async function addFavoriteFromUrl(rawInput) {
       "Das sieht nicht nach einem nuLiga-Mannschaftsportrait-Link aus. Bitte den Link der teamPortrait-Seite einfügen."
     );
   }
+  return addFavorite(parsed);
+}
 
-  const id = favoriteTeamId(parsed.host, parsed.teamtable, parsed.championship, parsed.group);
+/** Fügt ein Team hinzu (aus der Suche oder aus einem Link). */
+export async function addFavorite({ host = HVNB_HOST, teamtable, championship, group }) {
+  const id = favoriteTeamId(host, teamtable, championship, group);
   const favorites = await getAll(KEYS.favorites);
   if (favorites[id]) {
     throw new Error("Dieses Team ist bereits als Favorit gespeichert.");
   }
 
-  const { doc, url } = await fetchDocument(parsed.normalizedUrl);
+  const [{ doc, url }, extras] = await Promise.all([
+    fetchDocument(buildTeamPortraitUrl(host, teamtable, championship, group)),
+    // Tabelle & Statistiken best-effort - ein Fehler hier soll das
+    // Hinzufügen des Favoriten nicht scheitern lassen.
+    loadTableAndStats({ host, championship, group }).catch((err) => {
+      console.warn("Tabelle/Statistik konnten beim Hinzufügen nicht geladen werden:", err);
+      return null;
+    }),
+  ]);
   const portrait = parseTeamPortrait(doc, url);
-
-  const now = Date.now();
-  const team = {
-    id,
-    host: parsed.host,
-    teamtable: parsed.teamtable,
-    championship: parsed.championship,
-    group: parsed.group,
-    displayName: portrait.displayName || parsed.teamtable,
-    leagueName: portrait.leagueName,
-    clubName: portrait.clubName,
-    icsDownloadUrl: portrait.icsDownloadUrl,
-    icsWebcalUrl: portrait.icsWebcalUrl,
-    sortOrder: Object.keys(favorites).length,
-    addedAt: now,
-    lastSyncedAt: now,
-  };
-
-  favorites[id] = team;
-  await setAll(KEYS.favorites, favorites);
-
-  const matchesMap = await getAll(KEYS.matches);
-  matchesMap[id] = portrait.matches;
-  await setAll(KEYS.matches, matchesMap);
-
-  // Tabelle & Statistiken best-effort nachladen - ein Fehler hier soll das
-  // Hinzufügen des Favoriten nicht scheitern lassen.
-  try {
-    await refreshTableAndStats(team);
-  } catch (err) {
-    console.warn("Tabelle/Statistik konnten beim Hinzufügen nicht geladen werden:", err);
+  if (!portrait.displayName && portrait.matches.length === 0) {
+    throw new Error("Diese Mannschaft wurde bei nuLiga nicht gefunden.");
   }
 
-  return team;
+  return serialized(async () => {
+    const favorites = await getAll(KEYS.favorites);
+    const now = Date.now();
+    const team = {
+      id,
+      host,
+      teamtable,
+      championship,
+      group,
+      displayName: portrait.displayName || teamtable,
+      leagueName: portrait.leagueName,
+      clubName: portrait.clubName,
+      icsDownloadUrl: portrait.icsDownloadUrl,
+      icsWebcalUrl: portrait.icsWebcalUrl,
+      sortOrder: Object.keys(favorites).length,
+      addedAt: now,
+      lastSyncedAt: now,
+    };
+    favorites[id] = team;
+    await setAll(KEYS.favorites, favorites);
+
+    const matchesMap = await getAll(KEYS.matches);
+    matchesMap[id] = portrait.matches.map((m) => ({ ...m, lastChange: null }));
+    await setAll(KEYS.matches, matchesMap);
+
+    if (extras) await saveTableAndStats(id, extras);
+    return team;
+  });
 }
 
-export async function removeFavorite(id) {
-  const [favorites, matches, table, playerStats] = await Promise.all([
-    getAll(KEYS.favorites),
-    getAll(KEYS.matches),
-    getAll(KEYS.table),
-    getAll(KEYS.playerStats),
-  ]);
-  delete favorites[id];
-  delete matches[id];
-  delete table[id];
-  delete playerStats[id];
-  await Promise.all([
-    setAll(KEYS.favorites, favorites),
-    setAll(KEYS.matches, matches),
-    setAll(KEYS.table, table),
-    setAll(KEYS.playerStats, playerStats),
-  ]);
+export function removeFavorite(id) {
+  return serialized(async () => {
+    const [favorites, matches, table, playerStats] = await Promise.all([
+      getAll(KEYS.favorites),
+      getAll(KEYS.matches),
+      getAll(KEYS.table),
+      getAll(KEYS.playerStats),
+    ]);
+    delete favorites[id];
+    delete matches[id];
+    delete table[id];
+    delete playerStats[id];
+    await Promise.all([
+      setAll(KEYS.favorites, favorites),
+      setAll(KEYS.matches, matches),
+      setAll(KEYS.table, table),
+      setAll(KEYS.playerStats, playerStats),
+    ]);
+  });
 }
 
-async function refreshTableAndStats(team) {
-  const groupUrl = buildGroupPageUrl(team.host, team.championship, team.group);
-  const { doc: groupDoc, url: groupPageUrl } = await fetchDocument(groupUrl);
-  const tableRows = parseGroupTable(groupDoc, groupPageUrl);
-  const tableMap = await getAll(KEYS.table);
-  tableMap[team.id] = tableRows;
-  await setAll(KEYS.table, tableMap);
+// Alle Favoriten liegen jeweils in EINEM Speicher-Eintrag (favorites,
+// matches, ...). Damit sich parallele Aktualisierungen nicht gegenseitig
+// überschreiben, laufen alle Lese-Ändere-Schreibe-Abschnitte nacheinander -
+// die Netzwerkabrufe davor dürfen weiterhin parallel laufen.
+let writeQueue = Promise.resolve();
+function serialized(fn) {
+  const result = writeQueue.then(fn, fn);
+  writeQueue = result.catch(() => {});
+  return result;
+}
 
-  const statsByType = {};
-  for (const statType of PLAYER_STAT_TYPES) {
-    const statsUrl = buildPlayerStatsUrl(team.host, team.championship, team.group, statType.urlParam);
+/** Nur Netzwerk: Tabelle, 5 Spielerstatistiken und Mannschaftsstatistik der Staffel. */
+async function loadTableAndStats({ host, championship, group }) {
+  const loadStats = async (displayType, parse, fallback) => {
     try {
-      const { doc: statsDoc } = await fetchDocument(statsUrl);
-      statsByType[statType.key] = parsePlayerStats(statsDoc, statType.valueLabel);
+      const { doc } = await fetchDocument(buildPlayerStatsUrl(host, championship, group, displayType));
+      return parse(doc);
     } catch (err) {
-      console.warn(`Statistik "${statType.label}" konnte nicht geladen werden:`, err);
-      statsByType[statType.key] = [];
+      console.warn(`Statistik "${displayType}" konnte nicht geladen werden:`, err);
+      return fallback;
     }
-  }
+  };
+  const statsByType = {};
+  const [tableRows] = await Promise.all([
+    fetchDocument(buildGroupPageUrl(host, championship, group)).then(({ doc, url }) => parseGroupTable(doc, url)),
+    ...PLAYER_STAT_TYPES.map(async (statType) => {
+      statsByType[statType.key] = await loadStats(statType.urlParam, (doc) => parsePlayerStats(doc, statType.valueLabel), []);
+    }),
+    (async () => {
+      statsByType[TEAM_STATS_KEY] = await loadStats("groupAndTeams", parseTeamStats, { group: null, teams: [] });
+    })(),
+  ]);
+  return { tableRows, statsByType };
+}
+
+/** Nur innerhalb von serialized() aufrufen. */
+async function saveTableAndStats(id, { tableRows, statsByType }) {
+  const tableMap = await getAll(KEYS.table);
+  tableMap[id] = tableRows;
+  await setAll(KEYS.table, tableMap);
   const statsMap = await getAll(KEYS.playerStats);
-  statsMap[team.id] = statsByType;
+  statsMap[id] = statsByType;
   await setAll(KEYS.playerStats, statsMap);
 }
 
 /**
- * Lädt Spielplan, Tabelle und Statistiken eines Favoriten neu und ermittelt,
- * welche Spiele neu ein Ergebnis bekommen haben bzw. bald beginnen (für
- * Benachrichtigungen). Bereits gesetzte resultNotified/reminderSent-Flags
- * bleiben über den Abgleich per matchNumber erhalten.
+ * Lädt Spielplan, Tabelle und Statistiken eines Favoriten neu und ermittelt
+ * per src/shared/matchEvents.js (identisch zum Worker), was sich geändert hat:
+ * Spielplanänderungen, neue/entfallene Spiele, neue Ergebnisse und Spiele,
+ * die bald beginnen.
  *
- * @returns {Promise<{team: import('./models.js').FavoriteTeam, newlyFinishedMatches: import('./models.js').Match[], soonStartingMatches: import('./models.js').Match[]}>}
+ * @returns {Promise<{team: import('./models.js').FavoriteTeam, events: Array}>}
  */
 export async function refreshTeam(id) {
+  const known = await getFavorite(id);
+  if (!known) throw new Error(`Favorit ${id} existiert nicht (mehr).`);
+
+  const url = buildTeamPortraitUrl(known.host, known.teamtable, known.championship, known.group);
+  const [{ doc, url: resolvedUrl }, extras] = await Promise.all([
+    fetchDocument(url),
+    loadTableAndStats(known).catch((err) => {
+      console.warn("Tabelle/Statistik konnten beim Sync nicht aktualisiert werden:", err);
+      return null;
+    }),
+  ]);
+  const portrait = parseTeamPortrait(doc, resolvedUrl);
+
+  return serialized(() => mergeRefresh(id, portrait, extras));
+}
+
+async function mergeRefresh(id, portrait, extras) {
   const favorites = await getAll(KEYS.favorites);
   const team = favorites[id];
-  if (!team) throw new Error(`Favorit ${id} existiert nicht (mehr).`);
-
-  const url = buildTeamPortraitUrl(team.host, team.teamtable, team.championship, team.group);
-  const { doc, url: resolvedUrl } = await fetchDocument(url);
-  const portrait = parseTeamPortrait(doc, resolvedUrl);
+  if (!team) throw new Error(`Favorit ${id} wurde inzwischen entfernt.`);
 
   const matchesMap = await getAll(KEYS.matches);
   const previousMatches = matchesMap[id] || [];
   const previousByNumber = new Map(previousMatches.map((m) => [m.matchNumber, m]));
+  const now = Date.now();
+
+  const events = diffMatches(previousMatches, portrait.matches);
+  const changesByNumber = new Map(
+    events.filter((e) => e.type === EVENT_TYPES.changed).map((e) => [e.match.matchNumber, e.changes])
+  );
 
   const mergedMatches = portrait.matches.map((incoming) => {
     const previous = previousByNumber.get(incoming.matchNumber);
+    const changes = changesByNumber.get(incoming.matchNumber);
     return {
       ...incoming,
-      resultNotified: previous ? previous.resultNotified : false,
-      reminderSent: previous ? previous.reminderSent : false,
+      reminderSent: previous ? !!previous.reminderSent : false,
+      lastChange: changes ? { at: now, changes } : (previous && previous.lastChange) || null,
     };
   });
 
-  const newlyFinishedMatches = [];
-  const soonStartingMatches = [];
-  const now = Date.now();
-
-  for (const match of mergedMatches) {
-    const previous = previousByNumber.get(match.matchNumber);
-    const hasResult = match.homeScore != null && match.awayScore != null;
-    const hadResultBefore = previous && previous.homeScore != null && previous.awayScore != null;
-
-    if (hasResult && !hadResultBefore && !match.resultNotified) {
-      newlyFinishedMatches.push(match);
-      match.resultNotified = true;
-    }
-
-    if (!hasResult && !match.reminderSent && startsWithinWindow(match, now)) {
-      soonStartingMatches.push(match);
-      match.reminderSent = true;
-    }
+  const soon = matchesStartingBetween(
+    mergedMatches.filter((m) => !m.reminderSent),
+    now,
+    0,
+    REMINDER_LEAD_MINUTES
+  );
+  for (const match of soon) {
+    match.reminderSent = true;
+    events.push({ type: EVENT_TYPES.reminder, match });
   }
 
   matchesMap[id] = mergedMatches;
@@ -226,24 +309,11 @@ export async function refreshTeam(id) {
   favorites[id] = team;
   await setAll(KEYS.favorites, favorites);
 
-  try {
-    await refreshTableAndStats(team);
-  } catch (err) {
-    console.warn("Tabelle/Statistik konnten beim Sync nicht aktualisiert werden:", err);
-  }
-
-  return { team, newlyFinishedMatches, soonStartingMatches };
+  if (extras) await saveTableAndStats(id, extras);
+  return { team, events };
 }
 
-function startsWithinWindow(match, nowMs) {
-  if (!match.date || !match.time) return false;
-  const start = new Date(`${match.date}T${match.time}:00`);
-  if (Number.isNaN(start.getTime())) return false;
-  const diff = start.getTime() - nowMs;
-  return diff > 0 && diff <= UPCOMING_WINDOW_MS;
-}
-
-/** Aktualisiert alle Favoriten parallel (für den Hintergrund-Sync). */
+/** Aktualisiert alle Favoriten (Abrufe parallel, Speichern nacheinander). */
 export async function refreshAllFavorites() {
   const favorites = await getFavorites();
   const outcomes = await Promise.all(
@@ -275,10 +345,12 @@ export async function getVenue(host, locationId) {
   return venue;
 }
 
-export async function reorderFavorites(orderedIds) {
-  const favorites = await getAll(KEYS.favorites);
-  orderedIds.forEach((id, index) => {
-    if (favorites[id]) favorites[id].sortOrder = index;
+export function reorderFavorites(orderedIds) {
+  return serialized(async () => {
+    const favorites = await getAll(KEYS.favorites);
+    orderedIds.forEach((id, index) => {
+      if (favorites[id]) favorites[id].sortOrder = index;
+    });
+    await setAll(KEYS.favorites, favorites);
   });
-  await setAll(KEYS.favorites, favorites);
 }

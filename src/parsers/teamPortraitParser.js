@@ -1,4 +1,6 @@
 import { clean, linesByBr, directTds, queryParam } from "./htmlTextUtils.js";
+// Hinweis: worker/src/schedule.js liest den Spielplan identisch (per Regex) -
+// Änderungen hier dort nachziehen (Test: worker/test/schedule.test.mjs).
 
 /**
  * Parst eine teamPortrait-Seite: Vereins-/Liganamen aus der <h1>, den
@@ -66,12 +68,20 @@ function parseSchedule(doc, pageUrl) {
   const matches = [];
 
   for (const row of rows) {
-    const cells = directTds(row);
-    if (cells.length < 8) continue; // Kopf-/Trennzeile ohne echte Spieldaten
+    const cells = logicalCells(row);
+    if (cells.length < 8 || !cells[3] || !cells[7]) continue; // Kopf-/Trennzeile ohne echte Spieldaten
 
-    const dayOfWeek = clean(cells[0].textContent) || null;
-    const dateRaw = clean(cells[1].textContent);
-    const timeRaw = clean(cells[2].textContent);
+    // Verlegte Spiele (live gesehen 28.09.2026): Tag+Datum werden zu EINER
+    // Zelle "Termin offen" (colspan=2) zusammengefasst, die Zeitzelle trägt
+    // den Grund als title ("verlegt auf unbestimmten Termin").
+    const merged = cells[0] && !cells[1];
+    const dayOfWeek = merged || !cells[0] ? null : clean(cells[0].textContent) || null;
+    const dateRaw = cells[1] ? clean(cells[1].textContent) : "";
+    const timeRaw = cells[2] ? clean(cells[2].textContent) : "";
+    const note =
+      [merged ? clean(cells[0].textContent) : "", cells[2] ? clean(cells[2].getAttribute("title")) : ""]
+        .filter(Boolean)
+        .join(" – ") || null;
 
     const venueSpan = cells[3].querySelector("span[title]");
     const venueName = venueSpan ? clean(venueSpan.getAttribute("title")) : null;
@@ -119,10 +129,25 @@ function parseSchedule(doc, pageUrl) {
       awayScore,
       halftimeInfo,
       meetingId,
-      resultNotified: false,
+      note,
       reminderSent: false,
     });
   }
 
   return matches;
+}
+
+/**
+ * Zellen einer Zeile nach Spaltenposition: eine Zelle mit colspan=n belegt
+ * n Positionen (die folgenden als null), damit verschobene Zeilen wie
+ * "Termin offen" dieselben Indizes wie normale Zeilen behalten.
+ */
+function logicalCells(row) {
+  const out = [];
+  for (const td of directTds(row)) {
+    out.push(td);
+    const span = parseInt(td.getAttribute("colspan") || "1", 10) || 1;
+    for (let i = 1; i < span; i++) out.push(null);
+  }
+  return out;
 }

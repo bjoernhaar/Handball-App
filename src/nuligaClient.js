@@ -1,55 +1,38 @@
 // Lädt nuLiga-Seiten und parst sie mit dem eingebauten DOMParser.
 //
-// WICHTIGER UNTERSCHIED zur Chrome-Erweiterungs-Version: Diese PWA läuft in
-// einem ganz normalen Webseiten-Kontext (GitHub Pages), nicht in einer
-// Erweiterung mit host_permissions. Ein direkter fetch() auf
-// hvnb-handball.liga.nu würde daher an CORS scheitern, weil nuLiga keine
-// Access-Control-Allow-Origin-Header sendet - der Browser blockiert dann
-// das Auslesen der Antwort im JavaScript, obwohl der Request selbst
-// durchgeht. Deshalb läuft der Abruf hier über einen kostenlosen
-// CORS-Proxy (api.allorigins.win), der die Antwort im eigenen Namen
-// weiterreicht (inkl. finaler URL nach evtl. nuLiga-Redirects, in
-// payload.status.url).
-//
-// Das ist die einzige Stelle im Projekt, an der ein Fremd-Dienst beteiligt
-// ist. Fällt der Proxy aus oder wird er zu langsam/unzuverlässig, reicht
-// es, PROXY_URL unten gegen einen anderen Proxy auszutauschen (siehe
-// README, Abschnitt "CORS-Proxy austauschen") - der Rest der App bleibt
-// unverändert.
+// nuLiga sendet keine Access-Control-Allow-Origin-Header - ein Browser darf
+// die Seiten von einer fremden Webseite (GitHub Pages) aus deshalb nicht
+// direkt lesen. Der Abruf läuft daher über den eigenen Cloudflare Worker
+// (worker/src/index.js, Endpunkt /proxy): werbefrei, ohne Fremddienst, nur
+// für Seiten von hvnb-handball.liga.nu. Die nach Redirects tatsächlich
+// geladene URL kommt im Header X-Final-Url zurück.
 
-const PROXY_URL = (url) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+import { WORKER_URL } from "./config.js";
 
 /**
- * Lädt eine URL (über den CORS-Proxy) und liefert das geparste Document
- * zusammen mit der tatsächlich geladenen (nach Redirects aufgelösten) URL.
- * @param {string} url
+ * @param {string} url - nuLiga-Seite
  * @returns {Promise<{doc: Document, url: string}>}
  */
 export async function fetchDocument(url) {
   let response;
   try {
-    response = await fetch(PROXY_URL(url));
+    response = await fetch(`${WORKER_URL}/proxy?url=${encodeURIComponent(url)}`);
   } catch (err) {
-    throw new Error(
-      `CORS-Proxy nicht erreichbar (${err.message}). Prüfe deine Internetverbindung, oder der Proxy ist gerade down - siehe README.`
-    );
+    throw new Error(`Keine Verbindung zum Server (${err.message}). Bist du online?`);
   }
   if (!response.ok) {
-    throw new Error(`CORS-Proxy antwortete mit HTTP ${response.status}.`);
+    let message = null;
+    try {
+      message = (await response.json()).error;
+    } catch {
+      // keine JSON-Fehlermeldung
+    }
+    throw new Error(message || `Server antwortete mit HTTP ${response.status}.`);
   }
 
-  const payload = await response.json();
-  const httpCode = payload && payload.status && payload.status.http_code;
-  if (httpCode && httpCode >= 400) {
-    throw new Error(`nuLiga antwortete mit HTTP ${httpCode} für ${url}`);
-  }
-
-  const html = payload && payload.contents;
-  if (!html) {
-    throw new Error(`Leere Antwort von ${url}`);
-  }
-
-  const resolvedUrl = (payload.status && payload.status.url) || url;
+  const html = await response.text();
+  if (!html) throw new Error(`Leere Antwort von ${url}`);
+  const resolvedUrl = response.headers.get("X-Final-Url") || url;
   const doc = new DOMParser().parseFromString(html, "text/html");
   return { doc, url: resolvedUrl };
 }

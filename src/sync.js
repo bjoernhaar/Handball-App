@@ -1,20 +1,23 @@
-// Gemeinsame Sync-Logik, aufrufbar sowohl vom Hauptfenster (app.js, beim
-// Öffnen der App) als auch vom Service Worker (periodischer
-// Hintergrund-Sync) - beide übergeben ihre ServiceWorkerRegistration, damit
-// Benachrichtigungen unabhängig vom Aufrufer funktionieren.
+// Abgleich aller Favoriten beim Öffnen der App.
+//
+// Besteht ein Push-Abo, erkennt der Worker Änderungen ohnehin im Hintergrund
+// und verschickt die Mitteilungen - dann hier keine zweite, lokale Mitteilung.
+// Ohne Push-Abo (z.B. Browser ohne Push-Unterstützung) meldet die App
+// Änderungen wenigstens beim Öffnen selbst.
 
 import { refreshAllFavorites } from "./data/repository.js";
-import { notifyResult, notifyUpcoming } from "./notifications.js";
+import { notifyEvent } from "./notifications.js";
 
-/** @param {ServiceWorkerRegistration} registration */
+/** @param {ServiceWorkerRegistration|null} registration */
 export async function runSync(registration) {
   const outcomes = await refreshAllFavorites();
-  for (const outcome of outcomes) {
-    for (const match of outcome.newlyFinishedMatches) {
-      await notifyResult(registration, outcome.team, match);
-    }
-    for (const match of outcome.soonStartingMatches) {
-      await notifyUpcoming(registration, outcome.team, match);
+  const pushActive =
+    registration && registration.pushManager && (await registration.pushManager.getSubscription().catch(() => null));
+  if (!pushActive) {
+    for (const outcome of outcomes) {
+      for (const event of outcome.events) {
+        await notifyEvent(registration, outcome.team, event);
+      }
     }
   }
   return outcomes;

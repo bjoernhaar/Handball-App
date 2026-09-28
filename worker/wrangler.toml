@@ -1,0 +1,25 @@
+name = "handball-favoriten"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+# Abgleich mit nuLiga alle 15 Minuten (muss zu CRON_MINUTES in src/index.js passen)
+[triggers]
+crons = ["*/15 * * * *"]
+
+# Speicher für Push-Abos und Spielplan-Snapshots
+# (id wird nach "npx wrangler kv namespace create KV" eingetragen)
+[[kv_namespaces]]
+binding = "KV"
+id = "KV_NAMESPACE_ID"
+
+[vars]
+# Nur diese Seiten dürfen den Worker nutzen (kein offener Proxy)
+ALLOWED_ORIGINS = "https://bjoernhaar.github.io,http://localhost:8080"
+# Öffentlicher Teil des VAPID-Schlüssels (der private liegt als Secret VAPID_PRIVATE_JWK bei Cloudflare)
+VAPID_PUBLIC_KEY = "BDpQ8GUYPwu0PqucFF_HDfaPXE8GtWd1HhN3yVOcurzTSAKiwnfksr3iSjgSdsvnK5ZllrMx2_CZwncnULePDQQ"
+# Kontaktadresse für die Push-Dienste (Pflichtangabe bei VAPID) - die Adresse der App
+VAPID_SUBJECT = "https://bjoernhaar.github.io/Handball-App/"
+
+[observability]
+enabled = true
